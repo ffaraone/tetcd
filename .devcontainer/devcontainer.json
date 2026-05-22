@@ -1,0 +1,36 @@
+{
+  "name": "tetcd",
+  "dockerComposeFile": [
+    "compose.yml"
+  ],
+  "service": "app",
+  "workspaceFolder": "/app",
+  "mounts": [
+    "source=${localEnv:HOME}/.ssh,target=/root/.ssh,type=bind",
+    "source=${localEnv:HOME}/.config/starship.toml,target=/root/.config/starship.toml,type=bind",
+    "source=claude-code-config-${devcontainerId},target=/root/.claude,type=volume",
+    "source=prek-cache-${devcontainerId},target=/root/.cache/prek,type=volume",
+    "source=jetbrains-cache-${devcontainerId},target=/root/.cache/JetBrains,type=volume",
+    "source=jetbrains-share-${devcontainerId},target=/root/.local/share/JetBrains,type=volume",
+    "source=jetbrains-config-${devcontainerId},target=/root/.config/JetBrains,type=volume"
+  ],
+  "containerEnv": {
+    "CLAUDE_CONFIG_DIR": "/root/.claude",
+    "PREK_HOME": "/root/.cache/prek"
+  },
+  "runServices": ["etcd"],
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "charliermarsh.ruff",
+        "astral-sh.ty",
+        "anthropic.claude-code"
+      ],
+      "settings": {
+        "python.terminal.activateEnvironment": false,
+        "python.defaultInterpreterPath": "/opt/venv/bin/python"
+      }
+    }
+  }
+}

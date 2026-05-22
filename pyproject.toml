@@ -1,0 +1,82 @@
+[project]
+name = "tetcd"
+version = "0.1.0"
+description = "A TUI application for managing etcd key-value stores (v2 and v3)"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Francesco Faraone" },
+]
+keywords = ["etcd", "tui", "textual", "terminal", "kv", "key-value"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console :: Curses",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Database",
+    "Topic :: System :: Systems Administration",
+    "Topic :: Terminals",
+    "Typing :: Typed",
+]
+dependencies = [
+    "textual>=0.80.0",
+    "dynaconf>=3.2.0",
+    "typer>=0.12.0",
+    "httpx>=0.27.0",
+    "etcd3gw>=2.3.0",
+    "rich>=13.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/ffaraone/tetcd"
+Repository = "https://github.com/ffaraone/tetcd"
+Issues = "https://github.com/ffaraone/tetcd/issues"
+Changelog = "https://github.com/ffaraone/tetcd/releases"
+
+[project.scripts]
+tetcd = "tetcd.main:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tetcd"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "ruff>=0.6.0",
+    "ty>=0.0.1a1",
+    "textual-dev>=0.80.0",
+    "pytest-mock>=3.14.0",
+    "respx>=0.21.0",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src"]
+cache-dir = ".cache/ruff"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "B", "C4"]
+ignore = ["N999"]
+
+[tool.ty.environment]
+python-version = "3.12"
+
+[tool.ty.src]
+include = ["src", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+cache_dir = ".cache/pytest"
