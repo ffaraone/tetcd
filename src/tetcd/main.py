@@ -14,11 +14,25 @@ from tetcd.tui.app import TetcdApp
 app = typer.Typer(name="tetcd", help="A TUI for managing etcd (v2 and v3).", add_completion=False)
 
 
+def _version_callback(value: bool) -> None:
+    """Print the installed tetcd version and exit when ``--version`` is passed."""
+    if value:
+        typer.echo(f"tetcd {__version__}")
+        raise typer.Exit()
+
+
 @app.command()
-def run(
+def main(
     host: str = typer.Option(None, "--host", "-H", help="etcd host"),
     port: int = typer.Option(None, "--port", "-p", help="etcd port"),
     api_version: str = typer.Option(None, "--api", "-v", help="etcd API version: v2 or v3"),
+    version: bool = typer.Option(
+        False,
+        "--version",
+        callback=_version_callback,
+        is_eager=True,
+        help="Show the tetcd version and exit.",
+    ),
 ) -> None:
     """Launch the tetcd TUI browser against the resolved etcd endpoint.
 
@@ -36,12 +50,6 @@ def run(
         client = EtcdV3Client(host=resolved_host, port=resolved_port)
 
     TetcdApp(client=client).run()
-
-
-@app.command()
-def version() -> None:
-    """Print the installed tetcd version and exit."""
-    typer.echo(f"tetcd {__version__}")
 
 
 if __name__ == "__main__":

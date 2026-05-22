@@ -87,11 +87,20 @@ async def test_splash_dismissed_on_click(mock_client: MagicMock) -> None:
 
 @pytest.mark.asyncio
 async def test_splash_auto_dismiss(monkeypatch: pytest.MonkeyPatch, mock_client: MagicMock) -> None:
-    """The splash auto-dismisses after ``AUTO_DISMISS_SECONDS`` elapses."""
-    monkeypatch.setattr(splash_module.SplashScreen, "AUTO_DISMISS_SECONDS", 0.1)
+    """The splash auto-dismisses after ``AUTO_DISMISS_SECONDS`` elapses.
+
+    The dismiss happens through a Textual timer plus an unawaited
+    ``AwaitComplete``, so a single fixed pause was flaky on slow CI runners
+    (the screen pop was still pending when the assertion ran). Poll for the
+    transition with a generous overall deadline instead.
+    """
+    monkeypatch.setattr(splash_module.SplashScreen, "AUTO_DISMISS_SECONDS", 0.05)
 
     app = TetcdApp(client=mock_client, show_splash=True)
     async with app.run_test() as pilot:
         assert isinstance(app.screen, SplashScreen)
-        await pilot.pause(0.3)
+        for _ in range(60):
+            await pilot.pause(0.05)
+            if isinstance(app.screen, BrowserScreen):
+                break
         assert isinstance(app.screen, BrowserScreen)

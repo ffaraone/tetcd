@@ -50,7 +50,7 @@ tetcd --host my-etcd.internal --port 2379 --api v3
 tetcd --api v2
 
 # Show version
-tetcd version
+tetcd --version
 ```
 
 ### Keybindings
