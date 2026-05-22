@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Input, TextArea
+from textual.widgets import Input
 
-from tetcd.tui.screens.editor import AddDirScreen, AddKeyScreen, ConfirmScreen, EditKeyScreen
+from tetcd.tui.screens.editor import AddDirScreen, AddKeyScreen, ConfirmScreen
 
 
 class _Host(App[None]):
@@ -14,82 +14,28 @@ class _Host(App[None]):
         yield from ()
 
 
-# ── EditKeyScreen ─────────────────────────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_edit_key_save_via_button() -> None:
-    app = _Host()
-    result: list[str | None] = []
-    async with app.run_test() as pilot:
-        app.push_screen(EditKeyScreen("/k", "old"), callback=result.append)
-        await pilot.pause()
-        editor = app.screen.query_one("#value-editor", TextArea)
-        editor.text = "new-value"
-        await pilot.click("#btn-save")
-        await pilot.pause()
-    assert result == ["new-value"]
-
-
-@pytest.mark.asyncio
-async def test_edit_key_save_via_ctrl_s() -> None:
-    app = _Host()
-    result: list[str | None] = []
-    async with app.run_test() as pilot:
-        app.push_screen(EditKeyScreen("/k", "old"), callback=result.append)
-        await pilot.pause()
-        editor = app.screen.query_one("#value-editor", TextArea)
-        editor.text = "saved-via-key"
-        await pilot.press("ctrl+s")
-        await pilot.pause()
-    assert result == ["saved-via-key"]
-
-
-@pytest.mark.asyncio
-async def test_edit_key_cancel_via_button() -> None:
-    app = _Host()
-    result: list[str | None] = []
-    async with app.run_test() as pilot:
-        app.push_screen(EditKeyScreen("/k", "old"), callback=result.append)
-        await pilot.pause()
-        await pilot.click("#btn-cancel")
-        await pilot.pause()
-    assert result == [None]
-
-
-@pytest.mark.asyncio
-async def test_edit_key_cancel_via_escape() -> None:
-    app = _Host()
-    result: list[str | None] = []
-    async with app.run_test() as pilot:
-        app.push_screen(EditKeyScreen("/k", "old"), callback=result.append)
-        await pilot.pause()
-        await pilot.press("escape")
-        await pilot.pause()
-    assert result == [None]
-
-
 # ── AddKeyScreen ──────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_add_key_submits_key_and_value() -> None:
+async def test_add_key_submits_path() -> None:
+    """``AddKeyScreen`` dismisses with the typed path (no value field)."""
     app = _Host()
-    result: list[tuple[str, str] | None] = []
+    result: list[str | None] = []
     async with app.run_test() as pilot:
         app.push_screen(AddKeyScreen(prefix="/app"), callback=result.append)
         await pilot.pause()
         app.screen.query_one("#key-input", Input).value = "/app/foo"
-        app.screen.query_one("#value-input", Input).value = "bar"
         await pilot.click("#btn-add")
         await pilot.pause()
-    assert result == [("/app/foo", "bar")]
+    assert result == ["/app/foo"]
 
 
 @pytest.mark.asyncio
 async def test_add_key_empty_path_does_not_dismiss() -> None:
+    """An empty path leaves the modal open until the user cancels."""
     app = _Host()
-    result: list[tuple[str, str] | None] = []
+    result: list[str | None] = []
     async with app.run_test() as pilot:
         app.push_screen(AddKeyScreen(), callback=result.append)
         await pilot.pause()
@@ -104,8 +50,9 @@ async def test_add_key_empty_path_does_not_dismiss() -> None:
 
 @pytest.mark.asyncio
 async def test_add_key_escape_cancels() -> None:
+    """``escape`` dismisses the modal with ``None``."""
     app = _Host()
-    result: list[tuple[str, str] | None] = []
+    result: list[str | None] = []
     async with app.run_test() as pilot:
         app.push_screen(AddKeyScreen(), callback=result.append)
         await pilot.pause()
@@ -119,6 +66,7 @@ async def test_add_key_escape_cancels() -> None:
 
 @pytest.mark.asyncio
 async def test_add_dir_submits_path() -> None:
+    """``AddDirScreen`` dismisses with the typed directory path."""
     app = _Host()
     result: list[str | None] = []
     async with app.run_test() as pilot:
@@ -132,6 +80,7 @@ async def test_add_dir_submits_path() -> None:
 
 @pytest.mark.asyncio
 async def test_add_dir_empty_does_not_dismiss_then_cancel() -> None:
+    """An empty path leaves the modal open until the user explicitly cancels."""
     app = _Host()
     result: list[str | None] = []
     async with app.run_test() as pilot:
@@ -148,6 +97,7 @@ async def test_add_dir_empty_does_not_dismiss_then_cancel() -> None:
 
 @pytest.mark.asyncio
 async def test_add_dir_escape_cancels() -> None:
+    """``escape`` dismisses the modal with ``None``."""
     app = _Host()
     result: list[str | None] = []
     async with app.run_test() as pilot:
@@ -163,6 +113,7 @@ async def test_add_dir_escape_cancels() -> None:
 
 @pytest.mark.asyncio
 async def test_confirm_yes_via_button() -> None:
+    """Clicking ``Yes`` dismisses with ``True``."""
     app = _Host()
     result: list[bool | None] = []
     async with app.run_test() as pilot:
@@ -175,6 +126,7 @@ async def test_confirm_yes_via_button() -> None:
 
 @pytest.mark.asyncio
 async def test_confirm_no_via_button() -> None:
+    """Clicking ``No`` dismisses with ``False``."""
     app = _Host()
     result: list[bool | None] = []
     async with app.run_test() as pilot:
@@ -187,6 +139,7 @@ async def test_confirm_no_via_button() -> None:
 
 @pytest.mark.asyncio
 async def test_confirm_y_key() -> None:
+    """Pressing ``y`` confirms."""
     app = _Host()
     result: list[bool | None] = []
     async with app.run_test() as pilot:
@@ -199,6 +152,7 @@ async def test_confirm_y_key() -> None:
 
 @pytest.mark.asyncio
 async def test_confirm_n_key() -> None:
+    """Pressing ``n`` cancels."""
     app = _Host()
     result: list[bool | None] = []
     async with app.run_test() as pilot:
@@ -211,6 +165,7 @@ async def test_confirm_n_key() -> None:
 
 @pytest.mark.asyncio
 async def test_confirm_escape_cancels() -> None:
+    """``escape`` is treated as cancel."""
     app = _Host()
     result: list[bool | None] = []
     async with app.run_test() as pilot:

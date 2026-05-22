@@ -94,13 +94,13 @@ async def test_splash_auto_dismiss(monkeypatch: pytest.MonkeyPatch, mock_client:
     (the screen pop was still pending when the assertion ran). Poll for the
     transition with a generous overall deadline instead.
     """
-    monkeypatch.setattr(splash_module.SplashScreen, "AUTO_DISMISS_SECONDS", 0.05)
+    monkeypatch.setattr(splash_module.SplashScreen, "AUTO_DISMISS_SECONDS", 0.5)
 
     app = TetcdApp(client=mock_client, show_splash=True)
     async with app.run_test() as pilot:
         assert isinstance(app.screen, SplashScreen)
         for _ in range(60):
-            await pilot.pause(0.05)
+            await pilot.pause(0.1)
             if isinstance(app.screen, BrowserScreen):
                 break
         assert isinstance(app.screen, BrowserScreen)

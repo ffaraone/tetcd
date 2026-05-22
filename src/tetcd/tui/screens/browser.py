@@ -9,12 +9,7 @@ from textual.screen import Screen
 from textual.widgets import Footer, Header, Tree
 
 from tetcd.etcd.client import EtcdClientProtocol, EtcdNode
-from tetcd.tui.screens.editor import (
-    AddDirScreen,
-    AddKeyScreen,
-    ConfirmScreen,
-    EditKeyScreen,
-)
+from tetcd.tui.screens.editor import AddDirScreen, AddKeyScreen, ConfirmScreen
 from tetcd.tui.widgets.key_tree import KeyTree
 from tetcd.tui.widgets.key_value import KeyValuePanel
 
@@ -62,21 +57,18 @@ class BrowserScreen(Screen[None]):
     def on_tree_node_selected(self, event: Tree.NodeSelected[EtcdNode]) -> None:
         """Update the value panel when the user selects a tree node."""
         panel = self.query_one("#key-value", KeyValuePanel)
+        if panel.edit_mode:
+            return
         panel.selected_node = event.node.data
 
     def action_add_key(self) -> None:
-        """Prompt for a key/value pair and write it to etcd."""
+        """Ask for a key path, then open the value pane for the new entry."""
 
-        def handle(result: tuple[str, str] | None) -> None:
+        def handle(result: str | None) -> None:
             if result is None:
                 return
-            key, value = result
-            try:
-                self.etcd.put(key, value)
-                self.action_refresh()
-                self.notify(f"Added key: {key}", severity="information")
-            except Exception as exc:
-                self.notify(f"Error: {exc}", severity="error")
+            panel = self.query_one("#key-value", KeyValuePanel)
+            panel.start_edit(target_key=result, initial_value="", is_new=True)
 
         self.app.push_screen(AddKeyScreen(prefix=self._selected_prefix()), handle)
 
@@ -121,24 +113,14 @@ class BrowserScreen(Screen[None]):
         self.app.push_screen(ConfirmScreen(msg), handle)
 
     def action_edit(self) -> None:
-        """Open the editor for the currently selected key's value."""
+        """Open the value pane in edit mode for the selected leaf."""
         node = self._selected_node()
         if node is None or node.is_dir:
             self.notify("Select a key (not a directory) to edit.", severity="warning")
             return
-
-        def handle(new_value: str | None) -> None:
-            if new_value is None:
-                return
-            try:
-                self.etcd.put(node.key, new_value)
-                panel = self.query_one("#key-value", KeyValuePanel)
-                panel.selected_node = EtcdNode(key=node.key, value=new_value, is_dir=False)
-                self.notify(f"Saved: {node.key}", severity="information")
-            except Exception as exc:
-                self.notify(f"Error: {exc}", severity="error")
-
-        self.app.push_screen(EditKeyScreen(node.key, node.value or ""), handle)
+        panel = self.query_one("#key-value", KeyValuePanel)
+        panel.selected_node = node
+        panel.start_edit(target_key=node.key, initial_value=node.value or "")
 
     def action_refresh(self) -> None:
         """Clear and re-expand the key tree from the root."""
@@ -146,6 +128,36 @@ class BrowserScreen(Screen[None]):
         tree.clear()
         tree.root.data = EtcdNode(key="/", is_dir=True)
         tree.root.expand()
+
+    def on_key_value_panel_save_requested(self, event: KeyValuePanel.SaveRequested) -> None:
+        """Persist the editor buffer to etcd and leave edit mode on success."""
+        panel = self.query_one("#key-value", KeyValuePanel)
+        try:
+            self.etcd.put(event.key, event.value)
+        except Exception as exc:
+            self.notify(f"Error: {exc}", severity="error")
+            return
+
+        panel.exit_edit_mode()
+        if event.is_new:
+            self.action_refresh()
+            self.notify(f"Added key: {event.key}", severity="information")
+        else:
+            panel.selected_node = EtcdNode(key=event.key, value=event.value, is_dir=False)
+            self.notify(f"Saved: {event.key}", severity="information")
+
+    def on_key_value_panel_cancel_requested(self, event: KeyValuePanel.CancelRequested) -> None:
+        """Leave edit mode directly; if dirty, ask for confirmation first."""
+        panel = self.query_one("#key-value", KeyValuePanel)
+        if not event.dirty:
+            panel.exit_edit_mode()
+            return
+
+        def handle(confirmed: bool | None) -> None:
+            if confirmed:
+                panel.exit_edit_mode()
+
+        self.app.push_screen(ConfirmScreen("Discard unsaved changes?"), handle)
 
     def _selected_node(self) -> EtcdNode | None:
         """Return the ``EtcdNode`` attached to the tree's cursor, if any."""

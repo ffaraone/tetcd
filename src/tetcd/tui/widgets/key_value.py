@@ -1,65 +1,194 @@
-"""Right-hand panel that renders the currently selected key's value."""
+"""Right-hand panel: a bordered key/status box stacked above a value box."""
 
 from __future__ import annotations
 
+from typing import Any
+
 from textual.app import ComposeResult
+from textual.binding import Binding
+from textual.containers import Horizontal, Vertical
+from textual.message import Message
 from textual.reactive import reactive
-from textual.widget import Widget
-from textual.widgets import Label, Static
+from textual.widgets import Label, Static, TextArea
 
 from tetcd.etcd.client import EtcdNode
 
 
-class KeyValuePanel(Widget):
-    """Display the full key path and value for the currently selected node.
+class KeyValuePanel(Vertical):
+    """The right-hand column: a key header on top, the value pane below.
 
-    The widget owns a single reactive attribute, :attr:`selected_node`; assign
-    to it from the parent screen and the panel re-renders itself.
+    The widget owns two bordered sub-boxes, stacked vertically:
+
+    - **Key box** — shows the currently selected key on the left and a status
+      indicator on the right (``editing`` while in edit mode, ``● modified``
+      once the buffer diverges from the saved value).
+    - **Value box** — either a read-only :class:`Static` rendering of the
+      current value or, in edit mode, an editable :class:`TextArea`.
+
+    ``ctrl+s`` and ``escape`` are surfaced to the parent screen as
+    :class:`SaveRequested` / :class:`CancelRequested` messages so the screen
+    owns the etcd I/O and any confirmation flow.
     """
 
-    BORDER_TITLE = "Value"
+    BINDINGS = [
+        Binding("ctrl+s", "save", "Save", show=True),
+        Binding("escape", "cancel", "Cancel", show=True),
+    ]
 
     selected_node: reactive[EtcdNode | None] = reactive(None)
+    edit_mode: reactive[bool] = reactive(False)
+    dirty: reactive[bool] = reactive(False)
 
     DEFAULT_CSS = """
     KeyValuePanel {
-        border: round $primary;
-        padding: 1 2;
         height: 100%;
     }
-    KeyValuePanel .kv-key {
-        color: $accent;
-        text-style: bold;
-        margin-bottom: 1;
+    KeyValuePanel #key-header-box {
+        height: 3;
+        border: round $primary;
+        padding: 0 1;
     }
-    KeyValuePanel .kv-hint {
-        color: $text-muted;
-        text-style: italic;
+    KeyValuePanel #kv-key-label {
+        width: 1fr;
+        content-align: left middle;
     }
-    KeyValuePanel .kv-value {
-        color: $text;
+    KeyValuePanel #kv-status-label {
+        width: auto;
+        content-align: right middle;
+        padding-left: 1;
+    }
+    KeyValuePanel #value-box {
+        height: 1fr;
+        border: round $primary;
+        padding: 0 1;
+    }
+    KeyValuePanel #kv-value-content {
+        height: auto;
+    }
+    KeyValuePanel #kv-value-editor {
+        height: 1fr;
     }
     """
 
+    class SaveRequested(Message):
+        """Posted when the user commits the editor buffer with ``ctrl+s``."""
+
+        def __init__(self, key: str, value: str, is_new: bool) -> None:
+            """Carry the target ``key``/``value`` and whether it is a new key."""
+            super().__init__()
+            self.key = key
+            self.value = value
+            self.is_new = is_new
+
+    class CancelRequested(Message):
+        """Posted when the user asks to leave edit mode with ``escape``."""
+
+        def __init__(self, dirty: bool) -> None:
+            """Tell the parent whether the buffer had unsaved changes."""
+            super().__init__()
+            self.dirty = dirty
+
+    def __init__(self, **kwargs: Any) -> None:
+        """Build the panel; edit-mode buffers start empty."""
+        super().__init__(**kwargs)
+        self._target_key: str = ""
+        self._initial_value: str = ""
+        self._is_new: bool = False
+
     def compose(self) -> ComposeResult:
-        """Yield the key label and the value content widgets."""
-        yield Label("", classes="kv-key", id="kv-key-label")
-        yield Static("", classes="kv-value", id="kv-value-content")
+        """Yield the key-header box and the value-box (with both view modes)."""
+        with Horizontal(id="key-header-box"):
+            yield Label("No key selected", id="kv-key-label")
+            yield Label("", id="kv-status-label")
+        with Vertical(id="value-box"):
+            yield Static("", id="kv-value-content")
+            yield TextArea("", id="kv-value-editor", language=None)
+
+    def on_mount(self) -> None:
+        """Title the boxes and hide the editor until something asks for it."""
+        self.query_one("#kv-value-editor", TextArea).display = False
+        self.query_one("#key-header-box").border_title = "Key"
+        self.query_one("#value-box").border_title = "Value"
+
+    def start_edit(self, *, target_key: str, initial_value: str = "", is_new: bool = False) -> None:
+        """Enter edit mode for ``target_key`` pre-populated with ``initial_value``.
+
+        Set ``is_new=True`` when the key does not yet exist, so the parent
+        screen can refresh the tree after the put completes.
+        """
+        self._target_key = target_key
+        self._initial_value = initial_value
+        self._is_new = is_new
+        editor = self.query_one("#kv-value-editor", TextArea)
+        editor.text = initial_value
+        self.dirty = False
+        self.edit_mode = True
+        editor.focus()
+
+    def exit_edit_mode(self) -> None:
+        """Leave edit mode and reset the buffer-tracking state."""
+        self.edit_mode = False
+        self.dirty = False
+        self._target_key = ""
+        self._initial_value = ""
+        self._is_new = False
+
+    def action_save(self) -> None:
+        """Forward ``ctrl+s`` to the parent screen via :class:`SaveRequested`."""
+        if not self.edit_mode:
+            return
+        editor = self.query_one("#kv-value-editor", TextArea)
+        self.post_message(
+            self.SaveRequested(key=self._target_key, value=editor.text, is_new=self._is_new)
+        )
+
+    def action_cancel(self) -> None:
+        """Forward ``escape`` to the parent screen via :class:`CancelRequested`."""
+        if not self.edit_mode:
+            return
+        self.post_message(self.CancelRequested(dirty=self.dirty))
 
     def watch_selected_node(self, node: EtcdNode | None) -> None:
-        """Re-render whenever ``selected_node`` is reassigned."""
-        key_label = self.query_one("#kv-key-label", Label)
-        value_content = self.query_one("#kv-value-content", Static)
+        """Re-render the read-only view when the parent reassigns the node."""
+        self._refresh_view()
 
-        if node is None:
-            key_label.update("No key selected")
-            value_content.update("")
+    def watch_edit_mode(self, edit_mode: bool) -> None:
+        """Swap the static view for the editor (or back) when the mode flips."""
+        self.query_one("#kv-value-editor", TextArea).display = edit_mode
+        self.query_one("#kv-value-content", Static).display = not edit_mode
+        self._refresh_view()
+
+    def watch_dirty(self, dirty: bool) -> None:
+        """Repaint the status indicator when the dirty flag flips."""
+        self._refresh_view()
+
+    def on_text_area_changed(self, event: TextArea.Changed) -> None:
+        """Update ``dirty`` after every keystroke in the editor."""
+        if self.edit_mode:
+            self.dirty = event.text_area.text != self._initial_value
+
+    def _refresh_view(self) -> None:
+        """Synchronise the labels with the current mode + selection state."""
+        key_label = self.query_one("#kv-key-label", Label)
+        status_label = self.query_one("#kv-status-label", Label)
+        content = self.query_one("#kv-value-content", Static)
+
+        if self.edit_mode:
+            key_label.update(self._target_key or "")
+            status_label.update("● modified" if self.dirty else "editing")
             return
 
-        key_label.update(f"Key: {node.key}")
+        status_label.update("")
+        node = self.selected_node
+        if node is None:
+            key_label.update("No key selected")
+            content.update("")
+            return
+
+        key_label.update(node.key)
         if node.is_dir:
-            value_content.update("[dim italic]<directory>[/dim italic]")
+            content.update("<directory>")
         elif node.value is not None:
-            value_content.update(node.value)
+            content.update(node.value)
         else:
-            value_content.update("[dim italic]<empty>[/dim italic]")
+            content.update("<empty>")

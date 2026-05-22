@@ -1,4 +1,7 @@
-"""Modal screens for editing, adding, and confirming changes against etcd."""
+"""Modal screens for collecting key paths and confirming destructive actions.
+
+Editing a value is no longer a modal — it happens inline in the value pane.
+"""
 
 from __future__ import annotations
 
@@ -6,75 +9,16 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, Label, TextArea
+from textual.widgets import Button, Input, Label
 
 
-class EditKeyScreen(ModalScreen[str | None]):
-    """Modal screen for editing an existing key's value."""
+class AddKeyScreen(ModalScreen[str | None]):
+    """Modal screen for picking the path of a new key.
 
-    BINDINGS = [
-        Binding("escape", "cancel", "Cancel"),
-        Binding("ctrl+s", "save", "Save"),
-    ]
-
-    DEFAULT_CSS = """
-    EditKeyScreen {
-        align: center middle;
-    }
-    EditKeyScreen > .dialog {
-        background: $surface;
-        border: thick $primary;
-        padding: 1 2;
-        width: 70;
-        height: auto;
-        max-height: 30;
-    }
-    EditKeyScreen .dialog-title {
-        text-style: bold;
-        color: $accent;
-        margin-bottom: 1;
-    }
-    EditKeyScreen .button-row {
-        align: right middle;
-        height: auto;
-        margin-top: 1;
-    }
+    The value is *not* collected here: once the user confirms a path, the
+    parent screen switches the value pane into edit mode so the value can be
+    typed in place with full-screen real estate.
     """
-
-    def __init__(self, key: str, value: str) -> None:
-        """Edit ``value`` for the etcd entry at ``key``."""
-        super().__init__()
-        self._key = key
-        self._initial_value = value
-
-    def compose(self) -> ComposeResult:
-        """Yield the dialog title, the value editor, and the action buttons."""
-        with Vertical(classes="dialog"):
-            yield Label(f"Editing: {self._key}", classes="dialog-title")
-            yield TextArea(self._initial_value, id="value-editor", language=None)
-            with Horizontal(classes="button-row"):
-                yield Button("Save [ctrl+s]", variant="primary", id="btn-save")
-                yield Button("Cancel [esc]", variant="default", id="btn-cancel")
-
-    def action_save(self) -> None:
-        """Dismiss the modal returning the current editor contents."""
-        editor = self.query_one("#value-editor", TextArea)
-        self.dismiss(editor.text)
-
-    def action_cancel(self) -> None:
-        """Dismiss the modal returning ``None`` (caller treats as cancel)."""
-        self.dismiss(None)
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Route button clicks to the matching action."""
-        if event.button.id == "btn-save":
-            self.action_save()
-        else:
-            self.action_cancel()
-
-
-class AddKeyScreen(ModalScreen[tuple[str, str] | None]):
-    """Modal screen for adding a new key."""
 
     BINDINGS = [
         Binding("escape", "cancel", "Cancel"),
@@ -108,37 +52,34 @@ class AddKeyScreen(ModalScreen[tuple[str, str] | None]):
     """
 
     def __init__(self, prefix: str = "/") -> None:
-        """Pre-fill the placeholder using ``prefix`` as the directory hint."""
+        """Pre-fill the placeholder using ``prefix`` as the parent path hint."""
         super().__init__()
         self._prefix = prefix.rstrip("/") + "/"
 
     def compose(self) -> ComposeResult:
-        """Yield the key/value inputs and the action buttons."""
+        """Yield the key-path input and the action buttons."""
         with Vertical(classes="dialog"):
             yield Label("Add Key", classes="dialog-title")
             yield Label("Key path:", classes="field-label")
             yield Input(placeholder=f"{self._prefix}my-key", id="key-input")
-            yield Label("Value:", classes="field-label")
-            yield Input(placeholder="value", id="value-input")
             with Horizontal(classes="button-row"):
-                yield Button("Add", variant="primary", id="btn-add")
+                yield Button("Next", variant="primary", id="btn-add")
                 yield Button("Cancel", variant="default", id="btn-cancel")
 
     def action_cancel(self) -> None:
-        """Dismiss returning ``None`` so the caller skips the put."""
+        """Dismiss returning ``None`` so the caller skips opening the editor."""
         self.dismiss(None)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Submit the (key, value) tuple on ``btn-add``; cancel otherwise.
+        """Submit the key path on ``btn-add``; cancel otherwise.
 
-        The screen refuses to dismiss when the key is blank — this prevents
-        accidental writes against the etcd root.
+        A blank path is ignored so the modal stays open until the user either
+        types a valid path or explicitly cancels.
         """
         if event.button.id == "btn-add":
             key = self.query_one("#key-input", Input).value.strip()
-            value = self.query_one("#value-input", Input).value
             if key:
-                self.dismiss((key, value))
+                self.dismiss(key)
         else:
             self.dismiss(None)
 
@@ -211,7 +152,11 @@ class AddDirScreen(ModalScreen[str | None]):
 
 
 class ConfirmScreen(ModalScreen[bool]):
-    """Generic confirmation modal returning ``True`` for yes, ``False`` for no."""
+    """Generic confirmation modal returning ``True`` for yes, ``False`` for no.
+
+    Renders as a centred dialog on top of whatever screen is active; the rest
+    of the UI is dimmed so the prompt is unambiguously modal.
+    """
 
     BINDINGS = [
         Binding("escape", "cancel", "Cancel"),
@@ -222,21 +167,29 @@ class ConfirmScreen(ModalScreen[bool]):
     DEFAULT_CSS = """
     ConfirmScreen {
         align: center middle;
+        background: $background 60%;
     }
     ConfirmScreen > .dialog {
         background: $surface;
-        border: thick $warning;
-        padding: 1 2;
-        width: 50;
+        border: thick $primary;
+        padding: 1 3;
+        width: 60;
         height: auto;
     }
     ConfirmScreen .message {
+        width: 100%;
+        content-align: center middle;
+        text-style: bold;
         margin-bottom: 1;
     }
     ConfirmScreen .button-row {
-        align: right middle;
+        align: center middle;
         height: auto;
         margin-top: 1;
+    }
+    ConfirmScreen Button {
+        margin: 0 1;
+        min-width: 12;
     }
     """
 
@@ -246,11 +199,11 @@ class ConfirmScreen(ModalScreen[bool]):
         self._message = message
 
     def compose(self) -> ComposeResult:
-        """Yield the message and the Yes/No buttons."""
+        """Yield the prompt and the Yes/No buttons in a centred dialog."""
         with Vertical(classes="dialog"):
             yield Label(self._message, classes="message")
             with Horizontal(classes="button-row"):
-                yield Button("Yes [y]", variant="warning", id="btn-yes")
+                yield Button("Yes [y]", variant="primary", id="btn-yes")
                 yield Button("No [n]", variant="default", id="btn-no")
 
     def action_confirm(self) -> None:
