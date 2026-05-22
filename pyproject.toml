@@ -58,6 +58,8 @@ dev = [
     "textual-dev>=0.80.0",
     "pytest-mock>=3.14.0",
     "respx>=0.21.0",
+    "pytest-cov>=7.1.0",
+    "pytest-textual-snapshot>=1.0.0",
 ]
 
 [tool.ruff]
@@ -80,3 +82,29 @@ include = ["src", "tests"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 cache_dir = ".cache/pytest"
+addopts = [
+    "--strict-markers",
+    "--cov=tetcd",
+    "--cov-report=term-missing",
+    "--cov-report=xml",
+    "--cov-fail-under=95",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["src/tetcd"]
+data_file = ".cache/coverage"
+
+[tool.coverage.report]
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "\\.\\.\\.",
+    "pass",
+]
+show_missing = true
+skip_covered = false
+
+[tool.coverage.xml]
+output = ".cache/coverage.xml"

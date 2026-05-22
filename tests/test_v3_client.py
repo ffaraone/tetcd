@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -8,7 +9,8 @@ from tetcd.etcd.v3 import EtcdV3Client
 
 
 @pytest.fixture
-def mock_etcd3gw() -> MagicMock:
+def mock_etcd3gw() -> Iterator[MagicMock]:
+    """Yield a ``MagicMock`` that replaces the ``etcd3gw.client(...)`` instance."""
     mock_client = MagicMock()
     with patch("tetcd.etcd.v3.etcd3gw") as mock_module:
         mock_module.client.return_value = mock_client
@@ -83,3 +85,40 @@ def test_health_ok(client: EtcdV3Client, mock_etcd3gw: MagicMock) -> None:
 def test_health_fail(client: EtcdV3Client, mock_etcd3gw: MagicMock) -> None:
     mock_etcd3gw.status.side_effect = Exception("connection refused")
     assert client.health() is False
+
+
+def test_get_handles_string_value(client: EtcdV3Client, mock_etcd3gw: MagicMock) -> None:
+    mock_etcd3gw.get.return_value = ["already-decoded"]
+    node = client.get("/x")
+    assert node is not None
+    assert node.value == "already-decoded"
+
+
+def test_list_skips_empty_relative_keys(client: EtcdV3Client, mock_etcd3gw: MagicMock) -> None:
+    # Non-tuple entries default metadata to {}, leaving raw_key b"" and parts empty → skipped.
+    mock_etcd3gw.get_prefix.return_value = [b"orphan"]
+    assert client.list("/app") == []
+
+
+def test_list_decodes_str_value(client: EtcdV3Client, mock_etcd3gw: MagicMock) -> None:
+    mock_etcd3gw.get_prefix.return_value = [("plain-string", {"key": b"/app/host"})]
+    nodes = client.list("/app")
+    assert nodes[0].value == "plain-string"
+
+
+def test_list_keeps_first_virtual_dir_on_collision(
+    client: EtcdV3Client, mock_etcd3gw: MagicMock
+) -> None:
+    mock_etcd3gw.get_prefix.return_value = [
+        (b"1", {"key": b"/app/config/a"}),
+        (b"2", {"key": b"/app/config/b"}),
+    ]
+    nodes = client.list("/app")
+    assert len(nodes) == 1
+    assert nodes[0].is_dir
+    assert nodes[0].key == "/app/config"
+
+
+def test_make_dir_writes_sentinel_key(client: EtcdV3Client, mock_etcd3gw: MagicMock) -> None:
+    client.make_dir("/newdir")
+    mock_etcd3gw.put.assert_called_once_with("/newdir/.keep", "")

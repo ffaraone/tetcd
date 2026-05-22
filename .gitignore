@@ -10,3 +10,4 @@ dist/
 *.log
 
 .claude/settings.local.json
+snapshot_report.html

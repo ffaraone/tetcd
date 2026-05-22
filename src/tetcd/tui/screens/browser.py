@@ -1,3 +1,5 @@
+"""Main browser screen: a key tree on the left, a value panel on the right."""
+
 from __future__ import annotations
 
 from textual.app import ComposeResult
@@ -45,38 +47,26 @@ class BrowserScreen(Screen[None]):
     """
 
     def __init__(self, client: EtcdClientProtocol) -> None:
+        """Bind the screen to an etcd client implementing :class:`EtcdClientProtocol`."""
         super().__init__()
         self.etcd = client
 
     def compose(self) -> ComposeResult:
+        """Yield header, the tree/value split, and the footer."""
         yield Header()
         with Horizontal():
             yield KeyTree(self.etcd, id="key-tree")
             yield KeyValuePanel(id="key-value")
         yield Footer()
 
-    # ── tree selection ────────────────────────────────────────────────────────
-
     def on_tree_node_selected(self, event: Tree.NodeSelected[EtcdNode]) -> None:
+        """Update the value panel when the user selects a tree node."""
         panel = self.query_one("#key-value", KeyValuePanel)
         panel.selected_node = event.node.data
 
-    # ── actions ───────────────────────────────────────────────────────────────
-
-    def _selected_node(self) -> EtcdNode | None:
-        tree = self.query_one("#key-tree", KeyTree)
-        cursor = tree.cursor_node
-        return cursor.data if cursor else None
-
-    def _selected_prefix(self) -> str:
-        node = self._selected_node()
-        if node is None:
-            return "/"
-        if node.is_dir:
-            return node.key
-        return node.parent_key
-
     def action_add_key(self) -> None:
+        """Prompt for a key/value pair and write it to etcd."""
+
         def handle(result: tuple[str, str] | None) -> None:
             if result is None:
                 return
@@ -91,6 +81,8 @@ class BrowserScreen(Screen[None]):
         self.app.push_screen(AddKeyScreen(prefix=self._selected_prefix()), handle)
 
     def action_add_dir(self) -> None:
+        """Prompt for a directory path and create it in etcd."""
+
         def handle(result: str | None) -> None:
             if result is None:
                 return
@@ -104,6 +96,7 @@ class BrowserScreen(Screen[None]):
         self.app.push_screen(AddDirScreen(prefix=self._selected_prefix()), handle)
 
     def action_delete(self) -> None:
+        """Confirm and delete the currently selected key or directory."""
         node = self._selected_node()
         if node is None:
             self.notify("No key selected.", severity="warning")
@@ -128,6 +121,7 @@ class BrowserScreen(Screen[None]):
         self.app.push_screen(ConfirmScreen(msg), handle)
 
     def action_edit(self) -> None:
+        """Open the editor for the currently selected key's value."""
         node = self._selected_node()
         if node is None or node.is_dir:
             self.notify("Select a key (not a directory) to edit.", severity="warning")
@@ -138,7 +132,6 @@ class BrowserScreen(Screen[None]):
                 return
             try:
                 self.etcd.put(node.key, new_value)
-                # Refresh value panel immediately
                 panel = self.query_one("#key-value", KeyValuePanel)
                 panel.selected_node = EtcdNode(key=node.key, value=new_value, is_dir=False)
                 self.notify(f"Saved: {node.key}", severity="information")
@@ -148,7 +141,28 @@ class BrowserScreen(Screen[None]):
         self.app.push_screen(EditKeyScreen(node.key, node.value or ""), handle)
 
     def action_refresh(self) -> None:
+        """Clear and re-expand the key tree from the root."""
         tree = self.query_one("#key-tree", KeyTree)
         tree.clear()
         tree.root.data = EtcdNode(key="/", is_dir=True)
         tree.root.expand()
+
+    def _selected_node(self) -> EtcdNode | None:
+        """Return the ``EtcdNode`` attached to the tree's cursor, if any."""
+        tree = self.query_one("#key-tree", KeyTree)
+        cursor = tree.cursor_node
+        return cursor.data if cursor else None
+
+    def _selected_prefix(self) -> str:
+        """Return the key prefix the current selection should write into.
+
+        - No selection → ``"/"`` (the root).
+        - Directory selection → that directory's own key.
+        - Leaf selection → its parent key.
+        """
+        node = self._selected_node()
+        if node is None:
+            return "/"
+        if node.is_dir:
+            return node.key
+        return node.parent_key

@@ -1,3 +1,5 @@
+"""Modal screens for editing, adding, and confirming changes against etcd."""
+
 from __future__ import annotations
 
 from textual.app import ComposeResult
@@ -40,11 +42,13 @@ class EditKeyScreen(ModalScreen[str | None]):
     """
 
     def __init__(self, key: str, value: str) -> None:
+        """Edit ``value`` for the etcd entry at ``key``."""
         super().__init__()
         self._key = key
         self._initial_value = value
 
     def compose(self) -> ComposeResult:
+        """Yield the dialog title, the value editor, and the action buttons."""
         with Vertical(classes="dialog"):
             yield Label(f"Editing: {self._key}", classes="dialog-title")
             yield TextArea(self._initial_value, id="value-editor", language=None)
@@ -53,13 +57,16 @@ class EditKeyScreen(ModalScreen[str | None]):
                 yield Button("Cancel [esc]", variant="default", id="btn-cancel")
 
     def action_save(self) -> None:
+        """Dismiss the modal returning the current editor contents."""
         editor = self.query_one("#value-editor", TextArea)
         self.dismiss(editor.text)
 
     def action_cancel(self) -> None:
+        """Dismiss the modal returning ``None`` (caller treats as cancel)."""
         self.dismiss(None)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Route button clicks to the matching action."""
         if event.button.id == "btn-save":
             self.action_save()
         else:
@@ -101,10 +108,12 @@ class AddKeyScreen(ModalScreen[tuple[str, str] | None]):
     """
 
     def __init__(self, prefix: str = "/") -> None:
+        """Pre-fill the placeholder using ``prefix`` as the directory hint."""
         super().__init__()
         self._prefix = prefix.rstrip("/") + "/"
 
     def compose(self) -> ComposeResult:
+        """Yield the key/value inputs and the action buttons."""
         with Vertical(classes="dialog"):
             yield Label("Add Key", classes="dialog-title")
             yield Label("Key path:", classes="field-label")
@@ -116,9 +125,15 @@ class AddKeyScreen(ModalScreen[tuple[str, str] | None]):
                 yield Button("Cancel", variant="default", id="btn-cancel")
 
     def action_cancel(self) -> None:
+        """Dismiss returning ``None`` so the caller skips the put."""
         self.dismiss(None)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Submit the (key, value) tuple on ``btn-add``; cancel otherwise.
+
+        The screen refuses to dismiss when the key is blank — this prevents
+        accidental writes against the etcd root.
+        """
         if event.button.id == "btn-add":
             key = self.query_one("#key-input", Input).value.strip()
             value = self.query_one("#value-input", Input).value
@@ -163,10 +178,12 @@ class AddDirScreen(ModalScreen[str | None]):
     """
 
     def __init__(self, prefix: str = "/") -> None:
+        """Pre-fill the placeholder using ``prefix`` as the parent path."""
         super().__init__()
         self._prefix = prefix.rstrip("/") + "/"
 
     def compose(self) -> ComposeResult:
+        """Yield the directory input and the action buttons."""
         with Vertical(classes="dialog"):
             yield Label("Add Directory", classes="dialog-title")
             yield Label("Directory path:", classes="field-label")
@@ -176,9 +193,15 @@ class AddDirScreen(ModalScreen[str | None]):
                 yield Button("Cancel", variant="default", id="btn-cancel")
 
     def action_cancel(self) -> None:
+        """Dismiss returning ``None``."""
         self.dismiss(None)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Submit the directory path on ``btn-create``; cancel otherwise.
+
+        A blank path is ignored so the modal stays open until the user
+        either types a valid directory path or explicitly cancels.
+        """
         if event.button.id == "btn-create":
             path = self.query_one("#dir-input", Input).value.strip()
             if path:
@@ -188,7 +211,7 @@ class AddDirScreen(ModalScreen[str | None]):
 
 
 class ConfirmScreen(ModalScreen[bool]):
-    """Generic confirmation modal."""
+    """Generic confirmation modal returning ``True`` for yes, ``False`` for no."""
 
     BINDINGS = [
         Binding("escape", "cancel", "Cancel"),
@@ -218,10 +241,12 @@ class ConfirmScreen(ModalScreen[bool]):
     """
 
     def __init__(self, message: str) -> None:
+        """Show ``message`` as the confirmation prompt."""
         super().__init__()
         self._message = message
 
     def compose(self) -> ComposeResult:
+        """Yield the message and the Yes/No buttons."""
         with Vertical(classes="dialog"):
             yield Label(self._message, classes="message")
             with Horizontal(classes="button-row"):
@@ -229,10 +254,13 @@ class ConfirmScreen(ModalScreen[bool]):
                 yield Button("No [n]", variant="default", id="btn-no")
 
     def action_confirm(self) -> None:
+        """Dismiss with ``True`` to confirm the action."""
         self.dismiss(True)
 
     def action_cancel(self) -> None:
+        """Dismiss with ``False`` to abort."""
         self.dismiss(False)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Map ``btn-yes`` to confirm and anything else to cancel."""
         self.dismiss(event.button.id == "btn-yes")

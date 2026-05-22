@@ -17,7 +17,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.12", "3.13"]
+        python-version: ["3.12", "3.13", "3.14"]
 
     steps:
       - uses: actions/checkout@v4
@@ -44,3 +44,19 @@ jobs:
 
       - name: Run tests
         run: uv run pytest
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.python-version }}
+          path: .cache/coverage.xml
+          if-no-files-found: ignore
+
+      - name: Upload snapshot diff on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: snapshot-report-${{ matrix.python-version }}
+          path: snapshot_report.html
+          if-no-files-found: ignore

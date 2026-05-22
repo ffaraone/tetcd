@@ -1,5 +1,10 @@
 default_language_version:
     python: python3.12
+
+# Snapshot baselines from pytest-textual-snapshot are byte-exact terminal
+# captures and must not be touched by formatting hooks.
+exclude: ^tests/__snapshots__/
+
 repos:
     - repo: https://github.com/pre-commit/pre-commit-hooks
       rev: v5.0.0
@@ -18,8 +23,6 @@ repos:
       hooks:
           - id: ruff
             args:
-                - --config
-                - pyproject.toml
                 - --fix
           - id: ruff-format
     - repo: https://github.com/gitleaks/gitleaks
@@ -28,10 +31,10 @@ repos:
           - id: gitleaks
     - repo: local
       hooks:
-          - id: frontend-check
-            name: frontend check:all
+          - id: ty
+            name: ty check
             language: system
-            entry: bash -c 'cd frontend && exec npm run --silent check:all'
-            files: ^frontend/.*\.(ts|tsx|js|mjs|cjs|json|scss|md)$
+            entry: uv run ty check
+            types: [python]
             pass_filenames: false
             require_serial: true

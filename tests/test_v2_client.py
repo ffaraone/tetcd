@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import httpx
-import pytest  # noqa: F401
+import pytest
 import respx
 
 from tetcd.etcd.v2 import EtcdV2Client
@@ -134,3 +134,41 @@ def test_health_ok(client: EtcdV2Client) -> None:
 def test_health_fail(client: EtcdV2Client) -> None:
     respx.get("http://localhost:2379/health").mock(side_effect=httpx.ConnectError("refused"))
     assert client.health() is False
+
+
+@respx.mock
+def test_list_missing_returns_empty(client: EtcdV2Client) -> None:
+    respx.get(f"{BASE}/missing").mock(return_value=httpx.Response(404, json={}))
+    assert client.list("/missing") == []
+
+
+@respx.mock
+def test_delete_dir_non_recursive_sends_dir_param(client: EtcdV2Client) -> None:
+    respx.get(f"{BASE}/somedir").mock(
+        return_value=httpx.Response(
+            200,
+            json={"action": "get", "node": {"key": "/somedir", "dir": True}},
+        )
+    )
+    route = respx.delete(f"{BASE}/somedir").mock(
+        return_value=httpx.Response(200, json={"action": "delete"})
+    )
+    client.delete("/somedir", recursive=False)
+    call = route.calls[0]
+    assert "dir=true" in str(call.request.url)
+
+
+@respx.mock
+def test_delete_recursive(client: EtcdV2Client) -> None:
+    respx.get(f"{BASE}/somedir").mock(
+        return_value=httpx.Response(
+            200,
+            json={"action": "get", "node": {"key": "/somedir", "dir": True}},
+        )
+    )
+    route = respx.delete(f"{BASE}/somedir").mock(
+        return_value=httpx.Response(200, json={"action": "delete"})
+    )
+    client.delete("/somedir", recursive=True)
+    call = route.calls[0]
+    assert "recursive=true" in str(call.request.url)
