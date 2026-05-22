@@ -18,7 +18,7 @@
     "CLAUDE_CONFIG_DIR": "/root/.claude",
     "PREK_HOME": "/root/.cache/prek"
   },
-  "runServices": ["etcd"],
+  "runServices": ["etcd1", "etcd2"],
   "customizations": {
     "vscode": {
       "extensions": [

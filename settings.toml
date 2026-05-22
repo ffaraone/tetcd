@@ -1,13 +1,18 @@
 [default]
-etcd_version = "v3"
-etcd_host = "localhost"
-etcd_port = 2379
 log_level = "INFO"
 
-[development]
-etcd_host = "localhost"
-etcd_port = 2379
+# One [[default.servers]] block per etcd endpoint. ``label`` is the name shown
+# in the browser tree; ``api`` selects the backend ("v2" or "v3").
 
-[testing]
-etcd_host = "localhost"
-etcd_port = 2379
+[[default.servers]]
+label = "etcd 1"
+api = "v3"
+host = "etcd1"
+port = 2379
+
+
+[[default.servers]]
+label = "etcd 2"
+api = "v3"
+host = "etcd2"
+port = 2379

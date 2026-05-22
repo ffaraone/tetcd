@@ -7,7 +7,8 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Label, Static, TextArea
 
-from tetcd.etcd.client import EtcdNode
+from tests.conftest import make_server
+from tetcd.etcd.client import EtcdNode, Server
 from tetcd.tui.widgets.key_tree import KeyTree
 from tetcd.tui.widgets.key_value import KeyValuePanel
 
@@ -231,59 +232,148 @@ async def test_panel_cancel_outside_edit_mode_is_noop() -> None:
 
 
 class _TreeHost(App[None]):
-    def __init__(self, client: MagicMock) -> None:
+    def __init__(self, servers: list[Server]) -> None:
         super().__init__()
-        self.client = client
+        self.servers = servers
 
     def compose(self) -> ComposeResult:
-        yield KeyTree(self.client, id="tree")
+        yield KeyTree(self.servers, id="tree")
 
 
 @pytest.mark.asyncio
-async def test_key_tree_lists_children() -> None:
-    """Mounting the tree lists immediate children of ``/``."""
-    client = MagicMock()
-    client.list.return_value = [
-        EtcdNode(key="/a", is_dir=True),
-        EtcdNode(key="/k", value="v"),
-    ]
-    app = _TreeHost(client)
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        tree = app.query_one("#tree", KeyTree)
-        assert len(tree.root.children) == 2
-
-
-@pytest.mark.asyncio
-async def test_key_tree_shows_error_on_list_failure() -> None:
-    """A failing ``list`` surfaces as a red error leaf under the parent."""
-    client = MagicMock()
-    client.list.side_effect = RuntimeError("boom")
-    app = _TreeHost(client)
+async def test_key_tree_lists_servers_as_top_level_nodes() -> None:
+    """Each configured server becomes a top-level branch in the tree."""
+    app = _TreeHost([make_server("Prod"), make_server("Stage")])
     async with app.run_test() as pilot:
         await pilot.pause()
         tree = app.query_one("#tree", KeyTree)
         labels = [str(child.label) for child in tree.root.children]
+        assert any("Prod" in label for label in labels)
+        assert any("Stage" in label for label in labels)
+
+
+@pytest.mark.asyncio
+async def test_key_tree_lazy_loads_server_children_on_expand() -> None:
+    """Expanding a server branch fetches its top-level keys."""
+    client = MagicMock()
+    client.list.return_value = [EtcdNode(key="/a", is_dir=True), EtcdNode(key="/k", value="v")]
+    app = _TreeHost([make_server("Local", client=client)])
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        tree = app.query_one("#tree", KeyTree)
+        server_node = tree.root.children[0]
+        server_node.expand()
+        await pilot.pause()
+        assert len(server_node.children) == 2
+        client.list.assert_called_with("/")
+
+
+@pytest.mark.asyncio
+async def test_key_tree_shows_error_on_list_failure() -> None:
+    """A failing ``list`` surfaces as a red error leaf under the server node."""
+    client = MagicMock()
+    client.list.side_effect = RuntimeError("boom")
+    app = _TreeHost([make_server("Local", client=client)])
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        tree = app.query_one("#tree", KeyTree)
+        server_node = tree.root.children[0]
+        server_node.expand()
+        await pilot.pause()
+        labels = [str(child.label) for child in server_node.children]
         assert any("Error" in label for label in labels)
 
 
 @pytest.mark.asyncio
-async def test_key_tree_refresh_node_repopulates() -> None:
-    """``refresh_node`` drops the children and re-fetches them."""
+async def test_key_tree_client_for_walks_up_to_server() -> None:
+    """``client_for`` resolves the enclosing server's client for any node."""
     client = MagicMock()
-    client.list.return_value = [EtcdNode(key="/a", value="1")]
-    app = _TreeHost(client)
+    client.list.return_value = [EtcdNode(key="/a", is_dir=True)]
+    server = make_server("Local", client=client)
+    app = _TreeHost([server])
     async with app.run_test() as pilot:
         await pilot.pause()
         tree = app.query_one("#tree", KeyTree)
+        server_node = tree.root.children[0]
+        server_node.expand()
+        await pilot.pause()
+        leaf = server_node.children[0]
+        assert tree.client_for(leaf) is client
+        assert tree.client_for(server_node) is client
+
+
+@pytest.mark.asyncio
+async def test_key_tree_refresh_node_repopulates_server_subtree() -> None:
+    """``refresh_node`` re-fetches a server's children on demand."""
+    client = MagicMock()
+    client.list.return_value = [EtcdNode(key="/a", value="1")]
+    app = _TreeHost([make_server("Local", client=client)])
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        tree = app.query_one("#tree", KeyTree)
+        server_node = tree.root.children[0]
+        server_node.expand()
+        await pilot.pause()
         client.list.return_value = [
             EtcdNode(key="/a", value="1"),
             EtcdNode(key="/b", value="2"),
         ]
-        tree.refresh_node(tree.root)
+        tree.refresh_node(server_node)
+        await pilot.pause()
+        assert len(server_node.children) == 2
+
+
+@pytest.mark.asyncio
+async def test_key_tree_rebuild_restores_initial_layout() -> None:
+    """``rebuild`` clears the tree and recreates server branches."""
+    app = _TreeHost([make_server("A"), make_server("B")])
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        tree = app.query_one("#tree", KeyTree)
+        tree.rebuild()
         await pilot.pause()
         assert len(tree.root.children) == 2
 
 
-# ``Any`` is re-exported solely to keep ``KeyValuePanel.__init__`` happy in tests.
+@pytest.mark.asyncio
+async def test_key_tree_client_for_root_returns_none() -> None:
+    """The hidden Tree root has no server ancestor so ``client_for`` is None."""
+    app = _TreeHost([make_server("A")])
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        tree = app.query_one("#tree", KeyTree)
+        assert tree.client_for(tree.root) is None
+
+
+@pytest.mark.asyncio
+async def test_key_tree_refresh_node_repopulates_inner_directory() -> None:
+    """``refresh_node`` on a directory node walks back to its server's client."""
+    client = MagicMock()
+    client.list.side_effect = lambda prefix: {
+        "/": [EtcdNode(key="/app", is_dir=True)],
+        "/app": [EtcdNode(key="/app/host", value="h")],
+    }.get(prefix, [])
+    app = _TreeHost([make_server("Local", client=client)])
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        tree = app.query_one("#tree", KeyTree)
+        server_node = tree.root.children[0]
+        server_node.expand()
+        await pilot.pause()
+        app_node = server_node.children[0]
+        app_node.expand()
+        await pilot.pause()
+        # Mutate the listing and refresh just the /app node.
+        client.list.side_effect = lambda prefix: {
+            "/": [EtcdNode(key="/app", is_dir=True)],
+            "/app": [
+                EtcdNode(key="/app/host", value="h"),
+                EtcdNode(key="/app/port", value="8080"),
+            ],
+        }.get(prefix, [])
+        tree.refresh_node(app_node)
+        await pilot.pause()
+        assert len(app_node.children) == 2
+
+
 _: Any = None

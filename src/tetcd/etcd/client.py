@@ -58,3 +58,31 @@ class EtcdClientProtocol(Protocol):
 
     def health(self) -> bool:
         """Return ``True`` when the cluster responds to a health probe."""
+
+
+@dataclass(frozen=True)
+class ServerConfig:
+    """Static configuration for a single etcd endpoint (label + connection).
+
+    ``label`` is the human-readable name shown in the tree; ``api`` selects
+    the backend implementation (``"v2"`` or ``"v3"``); ``host`` / ``port``
+    are the network endpoint.
+    """
+
+    label: str
+    api: str = "v3"
+    host: str = "localhost"
+    port: int = 2379
+
+
+@dataclass
+class Server:
+    """A configured etcd endpoint paired with its live client.
+
+    Top-level tree nodes carry a :class:`Server`; everything beneath them
+    carries an :class:`EtcdNode`. Operations resolve the right client by
+    walking up the tree to the enclosing server.
+    """
+
+    config: ServerConfig
+    client: EtcdClientProtocol

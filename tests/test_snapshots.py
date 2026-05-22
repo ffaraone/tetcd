@@ -7,23 +7,32 @@ from textual.app import App, ComposeResult
 from textual.pilot import Pilot
 from textual.widgets import TextArea
 
-from tetcd.etcd.client import EtcdNode
+from tests.conftest import make_server
+from tetcd.etcd.client import EtcdNode, Server
 from tetcd.tui.app import TetcdApp
 from tetcd.tui.screens.editor import AddDirScreen, AddKeyScreen, ConfirmScreen
 from tetcd.tui.widgets.key_value import KeyValuePanel
 
 
-def _client() -> MagicMock:
-    """Return an etcd client stub with a small, predictable keyspace."""
+def _stub_client(prefix_listings: dict[str, list[EtcdNode]]) -> MagicMock:
+    """Return a client whose ``list`` answers from ``prefix_listings``."""
     client = MagicMock()
-    client.list.return_value = [
-        EtcdNode(key="/app", is_dir=True),
-        EtcdNode(key="/config", is_dir=True),
-        EtcdNode(key="/version", value="1.0.0"),
-    ]
-    client.get.return_value = EtcdNode(key="/version", value="1.0.0")
-    client.health.return_value = True
+    client.list.side_effect = lambda prefix: list(prefix_listings.get(prefix, []))
     return client
+
+
+def _multi_servers() -> list[Server]:
+    """Return two servers with predictable keyspaces for snapshots."""
+    prod = _stub_client(
+        {
+            "/": [
+                EtcdNode(key="/app", is_dir=True),
+                EtcdNode(key="/version", value="1.0.0"),
+            ]
+        }
+    )
+    stage = _stub_client({"/": [EtcdNode(key="/config", is_dir=True)]})
+    return [make_server("Production", client=prod), make_server("Staging", client=stage)]
 
 
 # ── app-level snapshots ─────────────────────────────────────────────────────
@@ -31,12 +40,12 @@ def _client() -> MagicMock:
 
 def test_splash_screen_snapshot(snap_compare: Any) -> None:
     """Initial frame with the splash modal in front of the browser."""
-    assert snap_compare(TetcdApp(client=_client(), show_splash=True))
+    assert snap_compare(TetcdApp(servers=_multi_servers(), show_splash=True))
 
 
 def test_browser_screen_snapshot(snap_compare: Any) -> None:
-    """Read-only browser screen with the seeded keyspace."""
-    assert snap_compare(TetcdApp(client=_client(), show_splash=False))
+    """Multi-server browser screen with two servers configured."""
+    assert snap_compare(TetcdApp(servers=_multi_servers(), show_splash=False))
 
 
 def test_browser_inline_editor_snapshot(snap_compare: Any) -> None:
@@ -50,7 +59,7 @@ def test_browser_inline_editor_snapshot(snap_compare: Any) -> None:
         await pilot.pause()
 
     assert snap_compare(
-        TetcdApp(client=_client(), show_splash=False),
+        TetcdApp(servers=_multi_servers(), show_splash=False),
         run_before=enter_edit,
     )
 
@@ -68,7 +77,7 @@ def test_browser_inline_editor_dirty_snapshot(snap_compare: Any) -> None:
         await pilot.pause()
 
     assert snap_compare(
-        TetcdApp(client=_client(), show_splash=False),
+        TetcdApp(servers=_multi_servers(), show_splash=False),
         run_before=make_dirty,
     )
 
@@ -120,5 +129,13 @@ def test_discard_changes_confirm_snapshot(snap_compare: Any) -> None:
     """Confirmation shown when escaping out of an edited buffer."""
     assert snap_compare(
         _ModalHost(lambda: ConfirmScreen("Discard unsaved changes?")),
+        run_before=_settle,
+    )
+
+
+def test_overwrite_paste_confirm_snapshot(snap_compare: Any) -> None:
+    """Confirmation shown when a paste would overwrite an existing key."""
+    assert snap_compare(
+        _ModalHost(lambda: ConfirmScreen("Overwrite existing '/app/k'?")),
         run_before=_settle,
     )
