@@ -19,7 +19,7 @@ class KeyValuePanel(Vertical):
 
     The widget owns two bordered sub-boxes, stacked vertically:
 
-    - **Key box** — shows the currently selected entry as ``<server>://<key>``
+    - **Key box** — shows the currently selected entry as ``<server>:<key>``
       on the left and, while in edit mode, a flat warning-style **Save**
       button paired with a **Cancel** button on the right so the user can
       always see how to commit or discard the buffer without remembering the
@@ -252,8 +252,8 @@ class KeyValuePanel(Vertical):
             content.update("<empty>")
 
     def _format_key(self, key: str) -> str:
-        """Prefix ``key`` with the active server label as ``<server>://<key>``."""
+        """Prefix ``key`` with the active server label as ``<server>:<key>``."""
         server = self.current_server
         if not server:
             return key
-        return f"{server}://{key}"
+        return f"{server}:{key}"

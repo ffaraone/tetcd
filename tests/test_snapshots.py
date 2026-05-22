@@ -104,16 +104,17 @@ async def _settle(pilot: Pilot) -> None:
 
 
 def test_add_key_modal_snapshot(snap_compare: Any) -> None:
-    """The simplified add-key modal that only collects a path."""
+    """Add-key modal with server context + prefix pre-fill."""
     assert snap_compare(
-        _ModalHost(lambda: AddKeyScreen(prefix="/app")),
+        _ModalHost(lambda: AddKeyScreen(prefix="/app", server_label="Production")),
         run_before=_settle,
     )
 
 
 def test_add_dir_modal_snapshot(snap_compare: Any) -> None:
+    """Add-dir modal with server context + prefix pre-fill."""
     assert snap_compare(
-        _ModalHost(lambda: AddDirScreen(prefix="/app")),
+        _ModalHost(lambda: AddDirScreen(prefix="/app", server_label="Production")),
         run_before=_settle,
     )
 

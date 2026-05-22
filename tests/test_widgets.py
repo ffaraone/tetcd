@@ -136,25 +136,25 @@ async def test_panel_tracks_dirty_on_save_button_label() -> None:
 
 @pytest.mark.asyncio
 async def test_panel_renders_server_prefix_for_selected_node() -> None:
-    """A selected node renders the header as ``<server>://<key>`` when the server is set."""
+    """A selected node renders the header as ``<server>:<key>`` when the server is set."""
     app = _KvHost()
     async with app.run_test() as pilot:
         panel = app.query_one("#kv", KeyValuePanel)
         panel.current_server = "Prod"
         panel.selected_node = EtcdNode(key="/my/key", value="v")
         await pilot.pause()
-        assert "Prod:///my/key" in _text(app.query_one("#kv-key-label", Label))
+        assert "Prod:/my/key" in _text(app.query_one("#kv-key-label", Label))
 
 
 @pytest.mark.asyncio
 async def test_panel_renders_server_prefix_in_edit_mode() -> None:
-    """``start_edit`` with ``server_label`` formats the header as ``<server>://<key>``."""
+    """``start_edit`` with ``server_label`` formats the header as ``<server>:<key>``."""
     app = _KvHost()
     async with app.run_test() as pilot:
         panel = app.query_one("#kv", KeyValuePanel)
         panel.start_edit(target_key="/my/key", initial_value="", server_label="Stage")
         await pilot.pause()
-        assert "Stage:///my/key" in _text(app.query_one("#kv-key-label", Label))
+        assert "Stage:/my/key" in _text(app.query_one("#kv-key-label", Label))
 
 
 @pytest.mark.asyncio
@@ -430,6 +430,61 @@ async def test_key_tree_client_for_root_returns_none() -> None:
         await pilot.pause()
         tree = app.query_one("#tree", KeyTree)
         assert tree.client_for(tree.root) is None
+
+
+@pytest.mark.asyncio
+async def test_key_tree_reveal_key_expands_path_and_returns_leaf() -> None:
+    """``reveal_key`` lazily loads each directory on the path and returns the leaf."""
+    client = MagicMock()
+    client.list.side_effect = lambda prefix: {
+        "/": [EtcdNode(key="/a", is_dir=True)],
+        "/a": [EtcdNode(key="/a/b", is_dir=True)],
+        "/a/b": [EtcdNode(key="/a/b/c", value="v")],
+    }.get(prefix, [])
+    app = _TreeHost([make_server("Local", client=client)])
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        tree = app.query_one("#tree", KeyTree)
+        server_node = tree.root.children[0]
+        revealed = tree.reveal_key(server_node, "/a/b/c")
+        assert revealed is not None
+        assert isinstance(revealed.data, EtcdNode)
+        assert revealed.data.key == "/a/b/c"
+
+
+@pytest.mark.asyncio
+async def test_key_tree_reveal_key_returns_none_for_missing_path() -> None:
+    """``reveal_key`` returns ``None`` when a segment of the path is absent."""
+    client = MagicMock()
+    client.list.side_effect = lambda prefix: (
+        [EtcdNode(key="/a", is_dir=True)] if prefix == "/" else []
+    )
+    app = _TreeHost([make_server("Local", client=client)])
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        tree = app.query_one("#tree", KeyTree)
+        server_node = tree.root.children[0]
+        assert tree.reveal_key(server_node, "/a/missing") is None
+
+
+@pytest.mark.asyncio
+async def test_key_tree_server_node_for_resolves_client() -> None:
+    """``server_node_for`` returns the top-level node bound to the given client."""
+    client_a = MagicMock()
+    client_a.list.return_value = []
+    client_b = MagicMock()
+    client_b.list.return_value = []
+    app = _TreeHost([make_server("A", client=client_a), make_server("B", client=client_b)])
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        tree = app.query_one("#tree", KeyTree)
+        node_a = tree.server_node_for(client_a)
+        node_b = tree.server_node_for(client_b)
+        assert node_a is not None and isinstance(node_a.data, Server)
+        assert node_a.data.config.label == "A"
+        assert node_b is not None and isinstance(node_b.data, Server)
+        assert node_b.data.config.label == "B"
+        assert tree.server_node_for(MagicMock()) is None
 
 
 @pytest.mark.asyncio

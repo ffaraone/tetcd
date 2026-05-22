@@ -73,6 +73,51 @@ class KeyTree(Tree[TreeData]):
         self.clear()
         self._populate()
 
+    def reveal_key(self, server_node: TreeNode[TreeData], key: str) -> TreeNode[TreeData] | None:
+        """Expand the path under ``server_node`` to ``key`` and return its node.
+
+        Walks the slash-separated segments of ``key`` from the server root
+        downward, synchronously loading any directory whose children have not
+        been fetched yet so the target ends up rendered in the tree. Returns
+        ``None`` if any segment along the path is missing from the keyspace.
+        """
+        self._ensure_children_loaded(server_node)
+        server_node.expand()
+
+        parts = [p for p in key.strip("/").split("/") if p]
+        current: TreeNode[TreeData] = server_node
+        accum = ""
+        for i, segment in enumerate(parts):
+            accum = f"{accum}/{segment}"
+            target = _find_child_by_key(current, accum)
+            if target is None:
+                return None
+            is_last = i == len(parts) - 1
+            if not is_last and isinstance(target.data, EtcdNode) and target.data.is_dir:
+                self._ensure_children_loaded(target)
+                target.expand()
+            current = target
+        return current
+
+    def server_node_for(self, client: EtcdClientProtocol) -> TreeNode[TreeData] | None:
+        """Return the top-level node bound to ``client``, or ``None`` if absent."""
+        for child in self.root.children:
+            if isinstance(child.data, Server) and child.data.client is client:
+                return child
+        return None
+
+    def _ensure_children_loaded(self, node: TreeNode[TreeData]) -> None:
+        """Populate ``node``'s children synchronously if not loaded yet."""
+        if node.children:
+            return
+        data = node.data
+        if isinstance(data, Server):
+            self._load_children(node, data.client, "/")
+        elif isinstance(data, EtcdNode) and data.is_dir:
+            client = self.client_for(node)
+            if client is not None:
+                self._load_children(node, client, data.key)
+
     def _populate(self) -> None:
         """Attach one expandable top-level branch per configured server."""
         for server in self.servers:
@@ -96,3 +141,12 @@ class KeyTree(Tree[TreeData]):
                 branch.allow_expand = True
             else:
                 node.add_leaf(f":page_facing_up: {child.name}", data=child)
+
+
+def _find_child_by_key(node: TreeNode[TreeData], key: str) -> TreeNode[TreeData] | None:
+    """Return the direct child of ``node`` whose ``EtcdNode.key`` equals ``key``."""
+    for child in node.children:
+        data = child.data
+        if isinstance(data, EtcdNode) and data.key == key:
+            return child
+    return None

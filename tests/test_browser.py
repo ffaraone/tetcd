@@ -177,6 +177,73 @@ async def test_browser_add_key_save_calls_put(single_server: list[Server]) -> No
 
 
 @pytest.mark.asyncio
+async def test_browser_save_refreshes_tree_and_selects_edited_key(
+    single_server: list[Server],
+) -> None:
+    """After an edit-save, the tree is refreshed and the edited key becomes the cursor."""
+    client = _mock(single_server[0])
+    app = TetcdApp(servers=single_server, show_splash=False)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        tree = app.screen.query_one(KeyTree)
+        server_node = _server_node(tree, "Local")
+        server_node.expand()
+        await pilot.pause()
+        initial_list_calls = client.list.call_count
+        tree.select_node(_child(server_node, "/k"))
+        await pilot.pause()
+        await pilot.press("e")
+        await pilot.pause()
+        app.screen.query_one("#kv-value-editor", TextArea).text = "updated"
+        await pilot.press("ctrl+s")
+        await pilot.pause()
+        cursor = tree.cursor_node
+        panel = app.screen.query_one(KeyValuePanel)
+    assert client.list.call_count > initial_list_calls
+    assert cursor is not None
+    assert isinstance(cursor.data, EtcdNode)
+    assert cursor.data.key == "/k"
+    assert panel.selected_node is not None
+    assert panel.selected_node.value == "updated"
+
+
+@pytest.mark.asyncio
+async def test_browser_save_reveals_and_selects_new_nested_key(
+    single_server: list[Server],
+) -> None:
+    """Adding a new key under a nested directory expands the path and selects the leaf."""
+    client = _mock(single_server[0])
+    # After the put, the refreshed listing under /app contains the new leaf.
+    listings = {
+        "/": [EtcdNode(key="/app", is_dir=True), EtcdNode(key="/k", value="hello")],
+        "/app": [EtcdNode(key="/app/host", value="h"), EtcdNode(key="/app/new", value="val")],
+    }
+    client.list.side_effect = lambda prefix: list(listings.get(prefix, []))
+
+    app = TetcdApp(servers=single_server, show_splash=False)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        tree = app.screen.query_one(KeyTree)
+        server_node = _server_node(tree, "Local")
+        server_node.expand()
+        await pilot.pause()
+        tree.select_node(_child(server_node, "/app"))
+        await pilot.pause()
+        await pilot.press("a")
+        await pilot.pause()
+        app.screen.query_one("#key-input", Input).value = "/app/new"
+        await pilot.click("#btn-add")
+        await pilot.pause()
+        app.screen.query_one("#kv-value-editor", TextArea).text = "val"
+        await pilot.press("ctrl+s")
+        await pilot.pause()
+        cursor = tree.cursor_node
+    assert cursor is not None
+    assert isinstance(cursor.data, EtcdNode)
+    assert cursor.data.key == "/app/new"
+
+
+@pytest.mark.asyncio
 async def test_browser_add_key_without_selection_warns(
     single_server: list[Server],
 ) -> None:

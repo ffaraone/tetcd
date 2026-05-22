@@ -19,9 +19,10 @@ class AddKeyScreen(ModalScreen[str | None]):
     parent screen switches the value pane into edit mode so the value can be
     typed in place with full-screen real estate.
 
-    The dialog uses a translucent border so the browser screen stays partially
-    visible behind it — important for orientation when adding under a deep
-    prefix.
+    The dialog shows the selected ``<server>://<prefix>`` context above the
+    input and pre-fills the input with the prefix so the user only has to
+    type the leaf name. A submission equal to the prefix alone is rejected
+    so callers never receive an empty leaf.
     """
 
     BINDINGS = [
@@ -65,21 +66,28 @@ class AddKeyScreen(ModalScreen[str | None]):
     }
     """
 
-    def __init__(self, prefix: str = "/") -> None:
-        """Pre-fill the placeholder using ``prefix`` as the parent path hint."""
+    def __init__(self, prefix: str = "/", server_label: str | None = None) -> None:
+        """Pre-fill the input with ``prefix`` under the selected ``server_label``."""
         super().__init__()
         self._prefix = prefix.rstrip("/") + "/"
+        self._server_label = server_label
 
     def compose(self) -> ComposeResult:
-        """Yield the dialog grid: title bar, field, input, action buttons."""
+        """Yield the dialog grid: title bar, context line, input, action buttons."""
         yield Grid(
             Label("Add Key", id="dialog-title"),
-            Label("Key path:", id="field-label"),
-            Input(placeholder=f"{self._prefix}my-key", id="key-input"),
+            Label(_under_label(self._server_label, self._prefix), id="field-label"),
+            Input(value=self._prefix, placeholder=f"{self._prefix}my-key", id="key-input"),
             Button("Next", variant="primary", id="btn-add"),
             Button("Cancel", id="btn-cancel"),
             id="dialog",
         )
+
+    def on_mount(self) -> None:
+        """Park the cursor at the end of the pre-filled prefix and focus."""
+        key_input = self.query_one("#key-input", Input)
+        key_input.cursor_position = len(self._prefix)
+        key_input.focus()
 
     def action_cancel(self) -> None:
         """Dismiss returning ``None`` so the caller skips opening the editor."""
@@ -88,12 +96,13 @@ class AddKeyScreen(ModalScreen[str | None]):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Submit the key path on ``btn-add``; cancel otherwise.
 
-        A blank path is ignored so the modal stays open until the user either
-        types a valid path or explicitly cancels.
+        Empty inputs and submissions equal to just the pre-filled prefix are
+        ignored so the modal stays open until the user types a leaf name or
+        explicitly cancels.
         """
         if event.button.id == "btn-add":
-            key = self.query_one("#key-input", Input).value.strip()
-            if key:
+            key = self.query_one("#key-input", Input).value.strip().rstrip("/")
+            if key and key != self._prefix.rstrip("/"):
                 self.dismiss(key)
         else:
             self.dismiss(None)
@@ -102,8 +111,10 @@ class AddKeyScreen(ModalScreen[str | None]):
 class AddDirScreen(ModalScreen[str | None]):
     """Modal screen for adding a new directory.
 
-    Uses the same translucent-border style as :class:`AddKeyScreen` so the
-    browser remains visible behind the prompt.
+    Mirrors :class:`AddKeyScreen`: shows the ``<server>://<prefix>`` context
+    above the input, pre-fills the input with the prefix so the user only
+    types the new directory name, and rejects submissions equal to just the
+    prefix.
     """
 
     BINDINGS = [
@@ -147,21 +158,28 @@ class AddDirScreen(ModalScreen[str | None]):
     }
     """
 
-    def __init__(self, prefix: str = "/") -> None:
-        """Pre-fill the placeholder using ``prefix`` as the parent path."""
+    def __init__(self, prefix: str = "/", server_label: str | None = None) -> None:
+        """Pre-fill the input with ``prefix`` under the selected ``server_label``."""
         super().__init__()
         self._prefix = prefix.rstrip("/") + "/"
+        self._server_label = server_label
 
     def compose(self) -> ComposeResult:
-        """Yield the dialog grid: title bar, field, input, action buttons."""
+        """Yield the dialog grid: title bar, context line, input, action buttons."""
         yield Grid(
             Label("Add Directory", id="dialog-title"),
-            Label("Directory path:", id="field-label"),
-            Input(placeholder=f"{self._prefix}my-dir", id="dir-input"),
+            Label(_under_label(self._server_label, self._prefix), id="field-label"),
+            Input(value=self._prefix, placeholder=f"{self._prefix}my-dir", id="dir-input"),
             Button("Create", variant="primary", id="btn-create"),
             Button("Cancel", id="btn-cancel"),
             id="dialog",
         )
+
+    def on_mount(self) -> None:
+        """Park the cursor at the end of the pre-filled prefix and focus."""
+        dir_input = self.query_one("#dir-input", Input)
+        dir_input.cursor_position = len(self._prefix)
+        dir_input.focus()
 
     def action_cancel(self) -> None:
         """Dismiss returning ``None``."""
@@ -170,12 +188,13 @@ class AddDirScreen(ModalScreen[str | None]):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Submit the directory path on ``btn-create``; cancel otherwise.
 
-        A blank path is ignored so the modal stays open until the user
-        either types a valid directory path or explicitly cancels.
+        Empty inputs and submissions equal to just the pre-filled prefix are
+        ignored so the modal stays open until the user types a directory
+        name or explicitly cancels.
         """
         if event.button.id == "btn-create":
-            path = self.query_one("#dir-input", Input).value.strip()
-            if path:
+            path = self.query_one("#dir-input", Input).value.strip().rstrip("/")
+            if path and path != self._prefix.rstrip("/"):
                 self.dismiss(path)
         else:
             self.dismiss(None)
@@ -257,3 +276,15 @@ class ConfirmScreen(ModalScreen[bool]):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Map ``btn-yes`` to confirm and anything else to cancel."""
         self.dismiss(event.button.id == "btn-yes")
+
+
+def _under_label(server_label: str | None, prefix: str) -> str:
+    """Render the ``Under: <server>://<prefix>`` context line for add modals.
+
+    The helper centralises the formatting used by :class:`AddKeyScreen` and
+    :class:`AddDirScreen` so both modals display the selected node context
+    identically. ``server_label`` is omitted when ``None`` (e.g. the modal
+    was opened with no selection).
+    """
+    target = f"{server_label}://{prefix}" if server_label else prefix
+    return f"Under: {target}"

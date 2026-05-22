@@ -103,7 +103,10 @@ class BrowserScreen(Screen[None]):
                 server_label=server_label,
             )
 
-        self.app.push_screen(AddKeyScreen(prefix=self._selected_prefix()), handle)
+        self.app.push_screen(
+            AddKeyScreen(prefix=self._selected_prefix(), server_label=server_label),
+            handle,
+        )
 
     def action_add_dir(self) -> None:
         """Prompt for a directory path and create it via the selected server's client."""
@@ -111,6 +114,7 @@ class BrowserScreen(Screen[None]):
         if client is None:
             self.notify("Select a server or path first.", severity="warning")
             return
+        server_label = self._selected_server_label()
 
         def handle(result: str | None) -> None:
             if result is None:
@@ -122,7 +126,10 @@ class BrowserScreen(Screen[None]):
             except Exception as exc:
                 self.notify(f"Error: {exc}", severity="error")
 
-        self.app.push_screen(AddDirScreen(prefix=self._selected_prefix()), handle)
+        self.app.push_screen(
+            AddDirScreen(prefix=self._selected_prefix(), server_label=server_label),
+            handle,
+        )
 
     def action_delete(self) -> None:
         """Confirm and delete the currently selected key or directory."""
@@ -215,7 +222,7 @@ class BrowserScreen(Screen[None]):
     # ── inline-editor message handlers ───────────────────────────────────────
 
     def on_key_value_panel_save_requested(self, event: KeyValuePanel.SaveRequested) -> None:
-        """Persist the editor buffer to etcd and leave edit mode on success."""
+        """Persist the editor buffer, refresh the tree, and select the saved key."""
         client = self._edit_client
         panel = self.query_one("#key-value", KeyValuePanel)
         if client is None:
@@ -229,12 +236,24 @@ class BrowserScreen(Screen[None]):
 
         panel.exit_edit_mode()
         self._edit_client = None
-        if event.is_new:
-            self._refresh_current_server()
-            self.notify(f"Added key: {event.key}", severity="information")
-        else:
-            panel.selected_node = EtcdNode(key=event.key, value=event.value, is_dir=False)
-            self.notify(f"Saved: {event.key}", severity="information")
+
+        tree = self.query_one("#key-tree", KeyTree)
+        server_node = tree.server_node_for(client)
+        if server_node is not None:
+            tree.refresh_node(server_node)
+            revealed = tree.reveal_key(server_node, event.key)
+            if revealed is not None:
+                if isinstance(revealed.data, EtcdNode):
+                    revealed.data.value = event.value
+                panel.selected_node = EtcdNode(key=event.key, value=event.value, is_dir=False)
+                # The freshly-added/refreshed tree nodes have ``line == -1``
+                # until the next render pass, so ``select_node`` is a no-op
+                # right now. Defer it so the cursor lands on the saved key
+                # once the tree has been re-laid-out.
+                self.call_after_refresh(tree.select_node, revealed)
+
+        verb = "Added" if event.is_new else "Saved"
+        self.notify(f"{verb}: {event.key}", severity="information")
 
     def on_key_value_panel_cancel_requested(self, event: KeyValuePanel.CancelRequested) -> None:
         """Leave edit mode directly; if dirty, ask for confirmation first."""
