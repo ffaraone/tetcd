@@ -22,7 +22,7 @@ class KeyTree(Tree[TreeData]):
     enclosing server.
     """
 
-    BORDER_TITLE = "Keys"
+    BORDER_TITLE = "Servers"
 
     def __init__(self, servers: list[Server], **kwargs: Any) -> None:
         """Build the tree pre-populated with one branch per server."""

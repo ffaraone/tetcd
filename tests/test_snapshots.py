@@ -55,7 +55,7 @@ def test_browser_inline_editor_snapshot(snap_compare: Any) -> None:
         await pilot.pause()
         panel = pilot.app.screen.query_one(KeyValuePanel)
         panel.selected_node = EtcdNode(key="/version", value="1.0.0")
-        panel.start_edit(target_key="/version", initial_value="1.0.0")
+        panel.start_edit(target_key="/version", initial_value="1.0.0", server_label="Production")
         await pilot.pause()
 
     assert snap_compare(
@@ -71,7 +71,7 @@ def test_browser_inline_editor_dirty_snapshot(snap_compare: Any) -> None:
         await pilot.pause()
         panel = pilot.app.screen.query_one(KeyValuePanel)
         panel.selected_node = EtcdNode(key="/version", value="1.0.0")
-        panel.start_edit(target_key="/version", initial_value="1.0.0")
+        panel.start_edit(target_key="/version", initial_value="1.0.0", server_label="Production")
         await pilot.pause()
         pilot.app.screen.query_one("#kv-value-editor", TextArea).text = "1.0.1"
         await pilot.pause()
@@ -138,4 +138,18 @@ def test_overwrite_paste_confirm_snapshot(snap_compare: Any) -> None:
     assert snap_compare(
         _ModalHost(lambda: ConfirmScreen("Overwrite existing '/app/k'?")),
         run_before=_settle,
+    )
+
+
+def test_modal_over_browser_shows_screen_behind_snapshot(snap_compare: Any) -> None:
+    """A modal pushed on top of the browser leaves the browser visible behind it."""
+
+    async def open_confirm(pilot: Pilot) -> None:
+        await pilot.pause()
+        pilot.app.push_screen(ConfirmScreen("Delete key '/version'?"))
+        await pilot.pause()
+
+    assert snap_compare(
+        TetcdApp(servers=_multi_servers(), show_splash=False),
+        run_before=open_confirm,
     )

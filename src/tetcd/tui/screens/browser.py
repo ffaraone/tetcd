@@ -78,6 +78,7 @@ class BrowserScreen(Screen[None]):
         if panel.edit_mode:
             return
         data = event.node.data
+        panel.current_server = self._server_label_for(event.node)
         panel.selected_node = data if isinstance(data, EtcdNode) else None
 
     # ── CRUD actions ─────────────────────────────────────────────────────────
@@ -88,13 +89,19 @@ class BrowserScreen(Screen[None]):
         if client is None:
             self.notify("Select a server or path first.", severity="warning")
             return
+        server_label = self._selected_server_label()
 
         def handle(result: str | None) -> None:
             if result is None:
                 return
             panel = self.query_one("#key-value", KeyValuePanel)
             self._edit_client = client
-            panel.start_edit(target_key=result, initial_value="", is_new=True)
+            panel.start_edit(
+                target_key=result,
+                initial_value="",
+                is_new=True,
+                server_label=server_label,
+            )
 
         self.app.push_screen(AddKeyScreen(prefix=self._selected_prefix()), handle)
 
@@ -153,7 +160,11 @@ class BrowserScreen(Screen[None]):
         panel = self.query_one("#key-value", KeyValuePanel)
         panel.selected_node = node
         self._edit_client = client
-        panel.start_edit(target_key=node.key, initial_value=node.value or "")
+        panel.start_edit(
+            target_key=node.key,
+            initial_value=node.value or "",
+            server_label=self._selected_server_label(),
+        )
 
     def action_refresh(self) -> None:
         """Re-fetch the children of every configured server."""
@@ -260,6 +271,21 @@ class BrowserScreen(Screen[None]):
         if cursor is None:
             return None
         return tree.client_for(cursor)
+
+    def _selected_server_label(self) -> str | None:
+        """Return the label of the server hosting the current cursor, if any."""
+        tree = self.query_one("#key-tree", KeyTree)
+        cursor = tree.cursor_node
+        if cursor is None:
+            return None
+        return self._server_label_for(cursor)
+
+    def _server_label_for(self, node: TreeNode[TreeData]) -> str | None:
+        """Walk up to ``node``'s enclosing server and return its display label."""
+        server_node = self._enclosing_server_node(node)
+        if server_node is None or not isinstance(server_node.data, Server):
+            return None
+        return server_node.data.config.label
 
     def _selected_prefix(self) -> str:
         """Return the prefix new keys/dirs/paste targets should land under."""

@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Label, Static, TextArea
+from textual.widgets import Button, Label, Static, TextArea
 
 from tests.conftest import make_server
 from tetcd.etcd.client import EtcdNode, Server
@@ -18,6 +18,13 @@ def _text(widget: Label | Static) -> str:
     rendered = widget.render()
     plain = getattr(rendered, "plain", None)
     return str(plain) if plain is not None else str(rendered)
+
+
+def _button_label(button: Button) -> str:
+    """Return the plain-text label currently shown on ``button``."""
+    label = button.label
+    plain = getattr(label, "plain", None)
+    return str(plain) if plain is not None else str(label)
 
 
 class _KvHost(App[None]):
@@ -91,7 +98,7 @@ async def test_key_value_panel_empty_value_state() -> None:
 
 @pytest.mark.asyncio
 async def test_panel_enters_edit_mode_with_initial_value() -> None:
-    """``start_edit`` flips ``edit_mode`` and pre-fills the editor."""
+    """``start_edit`` flips ``edit_mode``, pre-fills the editor, and reveals the action buttons."""
     app = _KvHost()
     async with app.run_test() as pilot:
         panel = app.query_one("#kv", KeyValuePanel)
@@ -104,26 +111,106 @@ async def test_panel_enters_edit_mode_with_initial_value() -> None:
         assert editor.display is True
         assert app.query_one("#kv-value-content", Static).display is False
         assert "/k" in _text(app.query_one("#kv-key-label", Label))
-        assert "editing" in _text(app.query_one("#kv-status-label", Label))
+        assert app.query_one("#kv-edit-actions").display is True
 
 
 @pytest.mark.asyncio
-async def test_panel_tracks_dirty_on_text_change() -> None:
-    """Editing the buffer flips ``dirty``; reverting clears it."""
+async def test_panel_tracks_dirty_on_save_button_label() -> None:
+    """Dirty buffer adds a trailing ``*`` marker to the Save button; reverting clears it."""
     app = _KvHost()
     async with app.run_test() as pilot:
         panel = app.query_one("#kv", KeyValuePanel)
         panel.start_edit(target_key="/k", initial_value="hello")
         await pilot.pause()
+        save = app.query_one("#kv-save-button", Button)
         editor = app.query_one("#kv-value-editor", TextArea)
         editor.text = "world"
         await pilot.pause()
         assert panel.dirty is True
-        assert "●" in _text(app.query_one("#kv-status-label", Label))
+        assert "*" in _button_label(save)
         editor.text = "hello"
         await pilot.pause()
         assert panel.dirty is False
-        assert "●" not in _text(app.query_one("#kv-status-label", Label))
+        assert "*" not in _button_label(save)
+
+
+@pytest.mark.asyncio
+async def test_panel_renders_server_prefix_for_selected_node() -> None:
+    """A selected node renders the header as ``<server>://<key>`` when the server is set."""
+    app = _KvHost()
+    async with app.run_test() as pilot:
+        panel = app.query_one("#kv", KeyValuePanel)
+        panel.current_server = "Prod"
+        panel.selected_node = EtcdNode(key="/my/key", value="v")
+        await pilot.pause()
+        assert "Prod:///my/key" in _text(app.query_one("#kv-key-label", Label))
+
+
+@pytest.mark.asyncio
+async def test_panel_renders_server_prefix_in_edit_mode() -> None:
+    """``start_edit`` with ``server_label`` formats the header as ``<server>://<key>``."""
+    app = _KvHost()
+    async with app.run_test() as pilot:
+        panel = app.query_one("#kv", KeyValuePanel)
+        panel.start_edit(target_key="/my/key", initial_value="", server_label="Stage")
+        await pilot.pause()
+        assert "Stage:///my/key" in _text(app.query_one("#kv-key-label", Label))
+
+
+@pytest.mark.asyncio
+async def test_panel_omits_server_prefix_when_unset() -> None:
+    """With no current_server, the header shows the bare key without a prefix."""
+    app = _KvHost()
+    async with app.run_test() as pilot:
+        panel = app.query_one("#kv", KeyValuePanel)
+        panel.selected_node = EtcdNode(key="/my/key", value="v")
+        await pilot.pause()
+        text = _text(app.query_one("#kv-key-label", Label))
+        assert "/my/key" in text
+        assert "://" not in text
+
+
+@pytest.mark.asyncio
+async def test_panel_save_button_click_posts_message() -> None:
+    """Clicking the Save button posts ``SaveRequested`` just like ``ctrl+s``."""
+    app = _KvHost()
+    async with app.run_test() as pilot:
+        panel = app.query_one("#kv", KeyValuePanel)
+        panel.start_edit(target_key="/k", initial_value="hello")
+        await pilot.pause()
+        app.query_one("#kv-value-editor", TextArea).text = "updated"
+        await pilot.pause()
+        await pilot.click("#kv-save-button")
+        await pilot.pause()
+    assert len(app.save_messages) == 1
+    msg = app.save_messages[0]
+    assert msg.key == "/k"
+    assert msg.value == "updated"
+
+
+@pytest.mark.asyncio
+async def test_panel_cancel_button_click_posts_message() -> None:
+    """Clicking the Cancel button posts ``CancelRequested`` just like ``escape``."""
+    app = _KvHost()
+    async with app.run_test() as pilot:
+        panel = app.query_one("#kv", KeyValuePanel)
+        panel.start_edit(target_key="/k", initial_value="hello")
+        await pilot.pause()
+        app.query_one("#kv-value-editor", TextArea).text = "modified"
+        await pilot.pause()
+        await pilot.click("#kv-cancel-button")
+        await pilot.pause()
+    assert len(app.cancel_messages) == 1
+    assert app.cancel_messages[0].dirty is True
+
+
+@pytest.mark.asyncio
+async def test_panel_action_buttons_hidden_outside_edit_mode() -> None:
+    """The Save/Cancel action row stays hidden until edit mode is entered."""
+    app = _KvHost()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.query_one("#kv-edit-actions").display is False
 
 
 @pytest.mark.asyncio

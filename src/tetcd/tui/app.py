@@ -16,7 +16,7 @@ class TetcdApp(App[None]):
     TITLE = "tetcd"
     SUB_TITLE = "etcd TUI"
     CSS = """
-    Screen {
+    BrowserScreen {
         background: $surface;
     }
     """

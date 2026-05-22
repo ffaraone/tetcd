@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Grid
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label
 
@@ -18,6 +18,10 @@ class AddKeyScreen(ModalScreen[str | None]):
     The value is *not* collected here: once the user confirms a path, the
     parent screen switches the value pane into edit mode so the value can be
     typed in place with full-screen real estate.
+
+    The dialog uses a translucent border so the browser screen stays partially
+    visible behind it — important for orientation when adding under a deep
+    prefix.
     """
 
     BINDINGS = [
@@ -27,27 +31,37 @@ class AddKeyScreen(ModalScreen[str | None]):
     DEFAULT_CSS = """
     AddKeyScreen {
         align: center middle;
+        background: $background 50%;
     }
-    AddKeyScreen > .dialog {
-        background: $surface;
-        border: thick $primary;
-        padding: 1 2;
+    AddKeyScreen #dialog {
+        grid-size: 2 4;
+        grid-rows: 1 1 3 3;
+        grid-gutter: 1 2;
+        padding: 0 2 1 2;
         width: 60;
-        height: auto;
+        height: 13;
+        border: thick $background 80%;
+        background: $surface;
     }
-    AddKeyScreen .dialog-title {
+    AddKeyScreen #dialog-title {
+        column-span: 2;
+        height: 1;
+        width: 1fr;
+        content-align: center middle;
+        background: $panel;
+        color: $foreground;
         text-style: bold;
-        color: $accent;
-        margin-bottom: 1;
     }
-    AddKeyScreen .field-label {
-        margin-top: 1;
+    AddKeyScreen #field-label {
+        column-span: 2;
+        height: 1;
         color: $text-muted;
     }
-    AddKeyScreen .button-row {
-        align: right middle;
-        height: auto;
-        margin-top: 1;
+    AddKeyScreen #key-input {
+        column-span: 2;
+    }
+    AddKeyScreen Button {
+        width: 100%;
     }
     """
 
@@ -57,14 +71,15 @@ class AddKeyScreen(ModalScreen[str | None]):
         self._prefix = prefix.rstrip("/") + "/"
 
     def compose(self) -> ComposeResult:
-        """Yield the key-path input and the action buttons."""
-        with Vertical(classes="dialog"):
-            yield Label("Add Key", classes="dialog-title")
-            yield Label("Key path:", classes="field-label")
-            yield Input(placeholder=f"{self._prefix}my-key", id="key-input")
-            with Horizontal(classes="button-row"):
-                yield Button("Next", variant="primary", id="btn-add")
-                yield Button("Cancel", variant="default", id="btn-cancel")
+        """Yield the dialog grid: title bar, field, input, action buttons."""
+        yield Grid(
+            Label("Add Key", id="dialog-title"),
+            Label("Key path:", id="field-label"),
+            Input(placeholder=f"{self._prefix}my-key", id="key-input"),
+            Button("Next", variant="primary", id="btn-add"),
+            Button("Cancel", id="btn-cancel"),
+            id="dialog",
+        )
 
     def action_cancel(self) -> None:
         """Dismiss returning ``None`` so the caller skips opening the editor."""
@@ -85,7 +100,11 @@ class AddKeyScreen(ModalScreen[str | None]):
 
 
 class AddDirScreen(ModalScreen[str | None]):
-    """Modal screen for adding a new directory."""
+    """Modal screen for adding a new directory.
+
+    Uses the same translucent-border style as :class:`AddKeyScreen` so the
+    browser remains visible behind the prompt.
+    """
 
     BINDINGS = [
         Binding("escape", "cancel", "Cancel"),
@@ -94,27 +113,37 @@ class AddDirScreen(ModalScreen[str | None]):
     DEFAULT_CSS = """
     AddDirScreen {
         align: center middle;
+        background: $background 50%;
     }
-    AddDirScreen > .dialog {
-        background: $surface;
-        border: thick $primary;
-        padding: 1 2;
+    AddDirScreen #dialog {
+        grid-size: 2 4;
+        grid-rows: 1 1 3 3;
+        grid-gutter: 1 2;
+        padding: 0 2 1 2;
         width: 60;
-        height: auto;
+        height: 13;
+        border: thick $background 80%;
+        background: $surface;
     }
-    AddDirScreen .dialog-title {
+    AddDirScreen #dialog-title {
+        column-span: 2;
+        height: 1;
+        width: 1fr;
+        content-align: center middle;
+        background: $panel;
+        color: $foreground;
         text-style: bold;
-        color: $accent;
-        margin-bottom: 1;
     }
-    AddDirScreen .field-label {
-        margin-top: 1;
+    AddDirScreen #field-label {
+        column-span: 2;
+        height: 1;
         color: $text-muted;
     }
-    AddDirScreen .button-row {
-        align: right middle;
-        height: auto;
-        margin-top: 1;
+    AddDirScreen #dir-input {
+        column-span: 2;
+    }
+    AddDirScreen Button {
+        width: 100%;
     }
     """
 
@@ -124,14 +153,15 @@ class AddDirScreen(ModalScreen[str | None]):
         self._prefix = prefix.rstrip("/") + "/"
 
     def compose(self) -> ComposeResult:
-        """Yield the directory input and the action buttons."""
-        with Vertical(classes="dialog"):
-            yield Label("Add Directory", classes="dialog-title")
-            yield Label("Directory path:", classes="field-label")
-            yield Input(placeholder=f"{self._prefix}my-dir", id="dir-input")
-            with Horizontal(classes="button-row"):
-                yield Button("Create", variant="primary", id="btn-create")
-                yield Button("Cancel", variant="default", id="btn-cancel")
+        """Yield the dialog grid: title bar, field, input, action buttons."""
+        yield Grid(
+            Label("Add Directory", id="dialog-title"),
+            Label("Directory path:", id="field-label"),
+            Input(placeholder=f"{self._prefix}my-dir", id="dir-input"),
+            Button("Create", variant="primary", id="btn-create"),
+            Button("Cancel", id="btn-cancel"),
+            id="dialog",
+        )
 
     def action_cancel(self) -> None:
         """Dismiss returning ``None``."""
@@ -154,8 +184,9 @@ class AddDirScreen(ModalScreen[str | None]):
 class ConfirmScreen(ModalScreen[bool]):
     """Generic confirmation modal returning ``True`` for yes, ``False`` for no.
 
-    Renders as a centred dialog on top of whatever screen is active; the rest
-    of the UI is dimmed so the prompt is unambiguously modal.
+    Renders as a centred dialog on top of whatever screen is active. The
+    translucent border keeps the underlying view partially visible so the
+    user sees the context the prompt refers to.
     """
 
     BINDINGS = [
@@ -167,29 +198,36 @@ class ConfirmScreen(ModalScreen[bool]):
     DEFAULT_CSS = """
     ConfirmScreen {
         align: center middle;
-        background: $background 60%;
+        background: $background 50%;
     }
-    ConfirmScreen > .dialog {
-        background: $surface;
-        border: thick $primary;
-        padding: 1 3;
+    ConfirmScreen #dialog {
+        grid-size: 2 3;
+        grid-rows: 1 1fr 3;
+        grid-gutter: 1 2;
+        padding: 0 2 1 2;
         width: 60;
-        height: auto;
+        height: 11;
+        border: thick $background 80%;
+        background: $surface;
     }
-    ConfirmScreen .message {
-        width: 100%;
+    ConfirmScreen #dialog-title {
+        column-span: 2;
+        height: 1;
+        width: 1fr;
+        content-align: center middle;
+        background: $panel;
+        color: $foreground;
+        text-style: bold;
+    }
+    ConfirmScreen #message {
+        column-span: 2;
+        height: 1fr;
+        width: 1fr;
         content-align: center middle;
         text-style: bold;
-        margin-bottom: 1;
-    }
-    ConfirmScreen .button-row {
-        align: center middle;
-        height: auto;
-        margin-top: 1;
     }
     ConfirmScreen Button {
-        margin: 0 1;
-        min-width: 12;
+        width: 100%;
     }
     """
 
@@ -199,12 +237,14 @@ class ConfirmScreen(ModalScreen[bool]):
         self._message = message
 
     def compose(self) -> ComposeResult:
-        """Yield the prompt and the Yes/No buttons in a centred dialog."""
-        with Vertical(classes="dialog"):
-            yield Label(self._message, classes="message")
-            with Horizontal(classes="button-row"):
-                yield Button("Yes [y]", variant="primary", id="btn-yes")
-                yield Button("No [n]", variant="default", id="btn-no")
+        """Yield the dialog grid: title bar, centred message, Yes/No buttons."""
+        yield Grid(
+            Label("Confirm", id="dialog-title"),
+            Label(self._message, id="message"),
+            Button("Yes [y]", variant="primary", id="btn-yes"),
+            Button("No [n]", id="btn-no"),
+            id="dialog",
+        )
 
     def action_confirm(self) -> None:
         """Dismiss with ``True`` to confirm the action."""
