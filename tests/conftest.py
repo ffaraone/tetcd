@@ -6,7 +6,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from tetcd.etcd.client import EtcdNode, Server, ServerConfig
+from tests.fakes import InMemoryEtcdClient
+from tetcd.etcd.client import EtcdClientProtocol, EtcdNode, Server, ServerConfig
 
 
 @pytest.fixture
@@ -21,9 +22,28 @@ def sample_nodes() -> list[EtcdNode]:
     ]
 
 
-def make_server(label: str, *, client: MagicMock | None = None) -> Server:
+def make_server(label: str, *, client: EtcdClientProtocol | None = None) -> Server:
     """Build a :class:`Server` whose ``client`` is a ``MagicMock`` by default."""
     return Server(
         config=ServerConfig(label=label, api="v3", host="localhost", port=2379),
         client=client if client is not None else MagicMock(),
+    )
+
+
+def make_in_memory_server(
+    label: str,
+    *,
+    values: dict[str, str] | None = None,
+    dirs: list[str] | None = None,
+) -> Server:
+    """Build a :class:`Server` backed by an :class:`InMemoryEtcdClient`.
+
+    Use this when a test needs the keyspace to round-trip writes — e.g. when
+    asserting that a saved value shows up in subsequent reads. ``values`` is
+    a ``{key: value}`` map of pre-existing leaves; ``dirs`` is a list of
+    pre-existing explicit directories.
+    """
+    return Server(
+        config=ServerConfig(label=label, api="v3", host="localhost", port=2379),
+        client=InMemoryEtcdClient(values=values, dirs=dirs),
     )

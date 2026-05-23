@@ -32,8 +32,18 @@ class KeyTree(Tree[TreeData]):
         self.show_root = False
 
     def on_mount(self) -> None:
-        """Add every configured server as a top-level expandable node."""
+        """Populate the tree and wire the cursor to the screen's selection state.
+
+        Both ``active_server`` and ``active_node`` are watched. When either
+        changes the cursor is moved to match — but only after the next render
+        pass, because freshly-loaded :class:`TreeNode` instances report
+        ``line == -1`` until layout completes and ``select_node`` would be a
+        no-op against them otherwise.
+        """
         self._populate()
+        screen = self.screen
+        self.watch(screen, "active_server", self._sync_cursor_from_state, init=False)
+        self.watch(screen, "active_node", self._sync_cursor_from_state, init=False)
 
     def on_tree_node_expanded(self, event: Tree.NodeExpanded[TreeData]) -> None:
         """Lazy-load children the first time a server/directory expands."""
@@ -105,6 +115,41 @@ class KeyTree(Tree[TreeData]):
             if isinstance(child.data, Server) and child.data.client is client:
                 return child
         return None
+
+    def _sync_cursor_from_state(self, _value: Any) -> None:
+        """Move the cursor onto the TreeNode matching the screen's active key.
+
+        Called whenever the screen reports a new ``active_server`` or
+        ``active_node``. Only ``active_node`` drives the cursor — picking a
+        server but no node (e.g. via tree click on the server itself) leaves
+        the existing cursor alone, which keeps repeated firings during a
+        compound state update (server-then-node) from racing each other.
+        """
+        screen = self.screen
+        server = getattr(screen, "active_server", None)
+        node = getattr(screen, "active_node", None)
+        if not isinstance(server, Server) or not isinstance(node, EtcdNode):
+            return
+        server_node = self.server_node_for(server.client)
+        if server_node is None:
+            return
+        revealed = self.reveal_key(server_node, node.key)
+        if revealed is None or self.cursor_node is revealed:
+            return
+        self._defer_select(revealed)
+
+    def _defer_select(self, target: TreeNode[TreeData]) -> None:
+        """Select ``target`` once Textual has assigned it a valid line.
+
+        ``reveal_key`` synchronously adds new :class:`TreeNode` instances
+        whose ``line`` attribute is ``-1`` until the next layout pass — so
+        a direct ``select_node`` would be a silent no-op. We re-schedule
+        via :meth:`call_after_refresh` until the line resolves, then commit.
+        """
+        if target.line >= 0:
+            self.select_node(target)
+            return
+        self.app.call_after_refresh(self._defer_select, target)
 
     def _ensure_children_loaded(self, node: TreeNode[TreeData]) -> None:
         """Populate ``node``'s children synchronously if not loaded yet."""

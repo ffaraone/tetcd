@@ -10,8 +10,8 @@ from textual.widgets import TextArea
 from tests.conftest import make_server
 from tetcd.etcd.client import EtcdNode, Server
 from tetcd.tui.app import TetcdApp
+from tetcd.tui.screens.browser import BrowserScreen
 from tetcd.tui.screens.editor import AddDirScreen, AddKeyScreen, ConfirmScreen
-from tetcd.tui.widgets.key_value import KeyValuePanel
 
 
 def _stub_client(prefix_listings: dict[str, list[EtcdNode]]) -> MagicMock:
@@ -50,34 +50,46 @@ def test_browser_screen_snapshot(snap_compare: Any) -> None:
 
 def test_browser_inline_editor_snapshot(snap_compare: Any) -> None:
     """Browser with the value pane swapped into edit mode (clean buffer)."""
+    servers = _multi_servers()
 
     async def enter_edit(pilot: Pilot) -> None:
         await pilot.pause()
-        panel = pilot.app.screen.query_one(KeyValuePanel)
-        panel.selected_node = EtcdNode(key="/version", value="1.0.0")
-        panel.start_edit(target_key="/version", initial_value="1.0.0", server_label="Production")
+        screen = pilot.app.screen
+        assert isinstance(screen, BrowserScreen)
+        screen.active_server = servers[0]
+        screen.active_node = EtcdNode(key="/version", value="1.0.0")
+        screen.edit_target_key = "/version"
+        screen.edit_initial_value = "1.0.0"
+        screen.edit_is_new = False
+        screen.edit_mode = True
         await pilot.pause()
 
     assert snap_compare(
-        TetcdApp(servers=_multi_servers(), show_splash=False),
+        TetcdApp(servers=servers, show_splash=False),
         run_before=enter_edit,
     )
 
 
 def test_browser_inline_editor_dirty_snapshot(snap_compare: Any) -> None:
     """Browser with the editor showing the dirty indicator after a buffer edit."""
+    servers = _multi_servers()
 
     async def make_dirty(pilot: Pilot) -> None:
         await pilot.pause()
-        panel = pilot.app.screen.query_one(KeyValuePanel)
-        panel.selected_node = EtcdNode(key="/version", value="1.0.0")
-        panel.start_edit(target_key="/version", initial_value="1.0.0", server_label="Production")
+        screen = pilot.app.screen
+        assert isinstance(screen, BrowserScreen)
+        screen.active_server = servers[0]
+        screen.active_node = EtcdNode(key="/version", value="1.0.0")
+        screen.edit_target_key = "/version"
+        screen.edit_initial_value = "1.0.0"
+        screen.edit_is_new = False
+        screen.edit_mode = True
         await pilot.pause()
         pilot.app.screen.query_one("#kv-value-editor", TextArea).text = "1.0.1"
         await pilot.pause()
 
     assert snap_compare(
-        TetcdApp(servers=_multi_servers(), show_splash=False),
+        TetcdApp(servers=servers, show_splash=False),
         run_before=make_dirty,
     )
 

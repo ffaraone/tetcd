@@ -1,4 +1,11 @@
-"""Main browser screen: multi-server key tree plus inline value editor."""
+"""Main browser screen: multi-server key tree plus inline value editor.
+
+The screen is the single writer of the shared selection/edit state. Both
+:class:`KeyTree` and :class:`KeyValuePanel` are pure views over that state;
+they react to it via watchers and never mutate it directly. User input
+arrives as Textual messages and key bindings; the screen translates those
+into state updates and etcd I/O.
+"""
 
 from __future__ import annotations
 
@@ -9,6 +16,7 @@ from typing import Literal
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
+from textual.reactive import reactive
 from textual.screen import Screen
 from textual.widgets import Footer, Header, Tree
 from textual.widgets.tree import TreeNode
@@ -57,12 +65,19 @@ class BrowserScreen(Screen[None]):
     }
     """
 
+    # ── shared selection + edit state (watched by KeyTree and KeyValuePanel) ──
+    active_server: reactive[Server | None] = reactive(None)
+    active_node: reactive[EtcdNode | None] = reactive(None)
+    edit_mode: reactive[bool] = reactive(False)
+    edit_target_key: reactive[str] = reactive("")
+    edit_initial_value: reactive[str] = reactive("")
+    edit_is_new: reactive[bool] = reactive(False)
+
     def __init__(self, servers: list[Server]) -> None:
         """Bind the screen to one or more configured etcd ``servers``."""
         super().__init__()
         self.servers = servers
         self._clipboard: _ClipboardItem | None = None
-        self._edit_client: EtcdClientProtocol | None = None
 
     def compose(self) -> ComposeResult:
         """Yield header, tree/value split, and footer."""
@@ -72,72 +87,73 @@ class BrowserScreen(Screen[None]):
             yield KeyValuePanel(id="key-value")
         yield Footer()
 
+    # ── tree → state ─────────────────────────────────────────────────────────
+
     def on_tree_node_selected(self, event: Tree.NodeSelected[TreeData]) -> None:
-        """Update the value panel when the user selects a tree node."""
-        panel = self.query_one("#key-value", KeyValuePanel)
-        if panel.edit_mode:
+        """Reflect the tree's cursor into the shared selection state."""
+        if self.edit_mode:
             return
         data = event.node.data
-        panel.current_server = self._server_label_for(event.node)
-        panel.selected_node = data if isinstance(data, EtcdNode) else None
+        if isinstance(data, Server):
+            self.active_server = data
+            self.active_node = None
+            return
+        if isinstance(data, EtcdNode):
+            server_node = self._enclosing_server_node(event.node)
+            if server_node is not None and isinstance(server_node.data, Server):
+                self.active_server = server_node.data
+            self.active_node = data
 
     # ── CRUD actions ─────────────────────────────────────────────────────────
 
     def action_add_key(self) -> None:
         """Ask for a key path, then open the value pane for the new entry."""
-        client = self._selected_client()
-        if client is None:
+        server = self.active_server
+        if server is None:
             self.notify("Select a server or path first.", severity="warning")
             return
-        server_label = self._selected_server_label()
 
         def handle(result: str | None) -> None:
             if result is None:
                 return
-            panel = self.query_one("#key-value", KeyValuePanel)
-            self._edit_client = client
-            panel.start_edit(
-                target_key=result,
-                initial_value="",
-                is_new=True,
-                server_label=server_label,
-            )
+            self._begin_edit(result, initial_value="", is_new=True)
 
         self.app.push_screen(
-            AddKeyScreen(prefix=self._selected_prefix(), server_label=server_label),
+            AddKeyScreen(prefix=self._selected_prefix(), server_label=server.config.label),
             handle,
         )
 
     def action_add_dir(self) -> None:
-        """Prompt for a directory path and create it via the selected server's client."""
-        client = self._selected_client()
-        if client is None:
+        """Prompt for a directory path and create it via the active server's client."""
+        server = self.active_server
+        if server is None:
             self.notify("Select a server or path first.", severity="warning")
             return
-        server_label = self._selected_server_label()
+        client = server.client
 
         def handle(result: str | None) -> None:
             if result is None:
                 return
             try:
                 client.make_dir(result)
-                self._refresh_current_server()
+                self._refresh_active_server()
                 self.notify(f"Created directory: {result}", severity="information")
             except Exception as exc:
                 self.notify(f"Error: {exc}", severity="error")
 
         self.app.push_screen(
-            AddDirScreen(prefix=self._selected_prefix(), server_label=server_label),
+            AddDirScreen(prefix=self._selected_prefix(), server_label=server.config.label),
             handle,
         )
 
     def action_delete(self) -> None:
         """Confirm and delete the currently selected key or directory."""
-        node = self._selected_etcd_node()
-        client = self._selected_client()
-        if node is None or client is None:
+        node = self.active_node
+        server = self.active_server
+        if node is None or server is None:
             self.notify("Select a key or directory to delete.", severity="warning")
             return
+        client = server.client
 
         msg = (
             f"Delete directory '{node.key}' and all its children?"
@@ -150,7 +166,8 @@ class BrowserScreen(Screen[None]):
                 return
             try:
                 client.delete(node.key, recursive=node.is_dir)
-                self._refresh_current_server()
+                self.active_node = None
+                self._refresh_active_server()
                 self.notify(f"Deleted: {node.key}", severity="information")
             except Exception as exc:
                 self.notify(f"Error: {exc}", severity="error")
@@ -158,20 +175,12 @@ class BrowserScreen(Screen[None]):
         self.app.push_screen(ConfirmScreen(msg), handle)
 
     def action_edit(self) -> None:
-        """Open the value pane in edit mode for the selected leaf."""
-        node = self._selected_etcd_node()
-        client = self._selected_client()
-        if node is None or node.is_dir or client is None:
+        """Open the value pane in edit mode for the active leaf."""
+        node = self.active_node
+        if node is None or node.is_dir or self.active_server is None:
             self.notify("Select a key (not a directory or server) to edit.", severity="warning")
             return
-        panel = self.query_one("#key-value", KeyValuePanel)
-        panel.selected_node = node
-        self._edit_client = client
-        panel.start_edit(
-            target_key=node.key,
-            initial_value=node.value or "",
-            server_label=self._selected_server_label(),
-        )
+        self._begin_edit(node.key, initial_value=node.value or "", is_new=False)
 
     def action_refresh(self) -> None:
         """Re-fetch the children of every configured server."""
@@ -198,10 +207,11 @@ class BrowserScreen(Screen[None]):
         if item is None:
             self.notify("Nothing in clipboard.", severity="warning")
             return
-        dst_client = self._selected_client()
-        if dst_client is None:
+        server = self.active_server
+        if server is None:
             self.notify("Select a destination server or directory.", severity="warning")
             return
+        dst_client = server.client
         dst_prefix = self._selected_prefix()
         new_root = dst_prefix.rstrip("/") + "/" + item.node.name
 
@@ -223,111 +233,75 @@ class BrowserScreen(Screen[None]):
 
     def on_key_value_panel_save_requested(self, event: KeyValuePanel.SaveRequested) -> None:
         """Persist the editor buffer, refresh the tree, and select the saved key."""
-        client = self._edit_client
-        panel = self.query_one("#key-value", KeyValuePanel)
-        if client is None:
+        server = self.active_server
+        if server is None:
             self.notify("No server bound to the active edit.", severity="error")
             return
         try:
-            client.put(event.key, event.value)
+            server.client.put(event.key, event.value)
         except Exception as exc:
             self.notify(f"Error: {exc}", severity="error")
             return
 
-        panel.exit_edit_mode()
-        self._edit_client = None
-
+        # Refresh the affected server's subtree so the next reveal sees fresh data.
         tree = self.query_one("#key-tree", KeyTree)
-        server_node = tree.server_node_for(client)
+        server_node = tree.server_node_for(server.client)
+        revealed: TreeNode[TreeData] | None = None
         if server_node is not None:
             tree.refresh_node(server_node)
             revealed = tree.reveal_key(server_node, event.key)
-            if revealed is not None:
-                if isinstance(revealed.data, EtcdNode):
-                    revealed.data.value = event.value
-                panel.selected_node = EtcdNode(key=event.key, value=event.value, is_dir=False)
-                # The freshly-added/refreshed tree nodes have ``line == -1``
-                # until the next render pass, so ``select_node`` is a no-op
-                # right now. Defer it so the cursor lands on the saved key
-                # once the tree has been re-laid-out.
-                self.call_after_refresh(tree.select_node, revealed)
+
+        # Single state transition: leave edit mode and point at the saved key.
+        # Widgets re-render via their watchers; the deferred select_node call
+        # is the only imperative tree poke because freshly-loaded TreeNodes
+        # have ``line == -1`` until the next render pass.
+        self.edit_mode = False
+        if revealed is not None and isinstance(revealed.data, EtcdNode):
+            self.active_node = revealed.data
+            self.call_after_refresh(tree.select_node, revealed)
 
         verb = "Added" if event.is_new else "Saved"
         self.notify(f"{verb}: {event.key}", severity="information")
 
     def on_key_value_panel_cancel_requested(self, event: KeyValuePanel.CancelRequested) -> None:
         """Leave edit mode directly; if dirty, ask for confirmation first."""
-        panel = self.query_one("#key-value", KeyValuePanel)
         if not event.dirty:
-            panel.exit_edit_mode()
-            self._edit_client = None
+            self.edit_mode = False
             return
 
         def handle(confirmed: bool | None) -> None:
             if confirmed:
-                panel.exit_edit_mode()
-                self._edit_client = None
+                self.edit_mode = False
 
         self.app.push_screen(ConfirmScreen("Discard unsaved changes?"), handle)
 
     # ── private helpers ──────────────────────────────────────────────────────
 
-    def _selected_node_data(self) -> TreeData | None:
-        """Return the data attached to the tree's cursor, or ``None``."""
-        tree = self.query_one("#key-tree", KeyTree)
-        cursor = tree.cursor_node
-        return cursor.data if cursor else None
-
-    def _selected_etcd_node(self) -> EtcdNode | None:
-        """Return the selected node if it is an :class:`EtcdNode`, else ``None``."""
-        data = self._selected_node_data()
-        return data if isinstance(data, EtcdNode) else None
-
-    def _selected_client(self) -> EtcdClientProtocol | None:
-        """Return the client owning the current selection, walking up to the server."""
-        tree = self.query_one("#key-tree", KeyTree)
-        cursor = tree.cursor_node
-        if cursor is None:
-            return None
-        return tree.client_for(cursor)
-
-    def _selected_server_label(self) -> str | None:
-        """Return the label of the server hosting the current cursor, if any."""
-        tree = self.query_one("#key-tree", KeyTree)
-        cursor = tree.cursor_node
-        if cursor is None:
-            return None
-        return self._server_label_for(cursor)
-
-    def _server_label_for(self, node: TreeNode[TreeData]) -> str | None:
-        """Walk up to ``node``'s enclosing server and return its display label."""
-        server_node = self._enclosing_server_node(node)
-        if server_node is None or not isinstance(server_node.data, Server):
-            return None
-        return server_node.data.config.label
+    def _begin_edit(self, target_key: str, *, initial_value: str, is_new: bool) -> None:
+        """Push the edit-context fields into state and flip on edit mode."""
+        self.edit_target_key = target_key
+        self.edit_initial_value = initial_value
+        self.edit_is_new = is_new
+        self.edit_mode = True
 
     def _selected_prefix(self) -> str:
         """Return the prefix new keys/dirs/paste targets should land under."""
-        data = self._selected_node_data()
-        if data is None or isinstance(data, Server):
+        node = self.active_node
+        if node is None:
             return "/"
-        if data.is_dir:
-            return data.key
-        return data.parent_key
+        if node.is_dir:
+            return node.key
+        return node.parent_key
 
-    def _refresh_current_server(self) -> None:
-        """Re-fetch the children of the server containing the current cursor.
-
-        ``action_refresh`` covers the case where the tree has no cursor at all;
-        this helper assumes an in-progress operation (add/edit/delete/paste)
-        and therefore expects the cursor to sit under a server branch.
-        """
-        tree = self.query_one("#key-tree", KeyTree)
-        cursor = tree.cursor_node
-        if cursor is None:
+    def _refresh_active_server(self) -> None:
+        """Re-fetch children of the currently active server, if any."""
+        server = self.active_server
+        if server is None:
+            tree = self.query_one("#key-tree", KeyTree)
             tree.rebuild()
             return
-        server_node = self._enclosing_server_node(cursor)
+        tree = self.query_one("#key-tree", KeyTree)
+        server_node = tree.server_node_for(server.client)
         if server_node is not None:
             tree.refresh_node(server_node)
 
@@ -342,12 +316,12 @@ class BrowserScreen(Screen[None]):
 
     def _stash_clipboard(self, operation: Literal["copy", "cut"]) -> None:
         """Capture the current selection for a future paste."""
-        node = self._selected_etcd_node()
-        client = self._selected_client()
-        if node is None or client is None:
+        node = self.active_node
+        server = self.active_server
+        if node is None or server is None:
             self.notify("Select a key or directory before copy/cut.", severity="warning")
             return
-        self._clipboard = _ClipboardItem(operation=operation, client=client, node=node)
+        self._clipboard = _ClipboardItem(operation=operation, client=server.client, node=node)
         verb = "Copied" if operation == "copy" else "Cut"
         self.notify(f"{verb}: {node.key}", severity="information")
 
@@ -364,7 +338,7 @@ class BrowserScreen(Screen[None]):
             return
 
         self._clipboard = None
-        self._refresh_current_server()
+        self._refresh_active_server()
         verb = "Moved" if item.operation == "cut" else "Copied"
         self.notify(f"{verb}: {item.node.key} → {new_root}", severity="information")
 

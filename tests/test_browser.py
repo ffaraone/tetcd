@@ -7,7 +7,7 @@ import pytest
 from textual.widgets import Input, TextArea
 from textual.widgets.tree import TreeNode
 
-from tests.conftest import make_server
+from tests.conftest import make_in_memory_server, make_server
 from tetcd.etcd.client import EtcdNode, Server
 from tetcd.tui.app import TetcdApp
 from tetcd.tui.screens.browser import BrowserScreen
@@ -56,6 +56,17 @@ def two_servers() -> list[Server]:
     a = _stub_client({"/": [EtcdNode(key="/a", value="from-a")]})
     b = _stub_client({"/": [EtcdNode(key="/b", value="from-b")]})
     return [make_server("A", client=a), make_server("B", client=b)]
+
+
+@pytest.fixture
+def single_server_in_memory() -> list[Server]:
+    """One server backed by the tracking in-memory fake — writes round-trip into reads."""
+    return [
+        make_in_memory_server(
+            "Local",
+            values={"/k": "hello", "/app/host": "h"},
+        )
+    ]
 
 
 def _browser(app: TetcdApp) -> BrowserScreen:
@@ -107,9 +118,9 @@ async def test_browser_selecting_leaf_updates_value_panel(
         await pilot.pause()
         tree.select_node(_child(server_node, "/k"))
         await pilot.pause()
-        panel = app.screen.query_one(KeyValuePanel)
-        assert panel.selected_node is not None
-        assert panel.selected_node.key == "/k"
+        active_node = _browser(app).active_node
+        assert active_node is not None
+        assert active_node.key == "/k"
 
 
 @pytest.mark.asyncio
@@ -124,8 +135,7 @@ async def test_browser_selecting_server_clears_value_panel(
         server_node = _server_node(tree, "Local")
         tree.select_node(server_node)
         await pilot.pause()
-        panel = app.screen.query_one(KeyValuePanel)
-        assert panel.selected_node is None
+        assert _browser(app).active_node is None
 
 
 @pytest.mark.asyncio
@@ -178,18 +188,16 @@ async def test_browser_add_key_save_calls_put(single_server: list[Server]) -> No
 
 @pytest.mark.asyncio
 async def test_browser_save_refreshes_tree_and_selects_edited_key(
-    single_server: list[Server],
+    single_server_in_memory: list[Server],
 ) -> None:
     """After an edit-save, the tree is refreshed and the edited key becomes the cursor."""
-    client = _mock(single_server[0])
-    app = TetcdApp(servers=single_server, show_splash=False)
+    app = TetcdApp(servers=single_server_in_memory, show_splash=False)
     async with app.run_test() as pilot:
         await pilot.pause()
         tree = app.screen.query_one(KeyTree)
         server_node = _server_node(tree, "Local")
         server_node.expand()
         await pilot.pause()
-        initial_list_calls = client.list.call_count
         tree.select_node(_child(server_node, "/k"))
         await pilot.pause()
         await pilot.press("e")
@@ -198,13 +206,15 @@ async def test_browser_save_refreshes_tree_and_selects_edited_key(
         await pilot.press("ctrl+s")
         await pilot.pause()
         cursor = tree.cursor_node
-        panel = app.screen.query_one(KeyValuePanel)
-    assert client.list.call_count > initial_list_calls
+        browser = _browser(app)
+        active_node = browser.active_node
     assert cursor is not None
     assert isinstance(cursor.data, EtcdNode)
     assert cursor.data.key == "/k"
-    assert panel.selected_node is not None
-    assert panel.selected_node.value == "updated"
+    # Tree's refreshed listing reflects the new value (no manual mutation needed).
+    assert cursor.data.value == "updated"
+    assert active_node is not None
+    assert active_node.value == "updated"
 
 
 @pytest.mark.asyncio
@@ -252,7 +262,7 @@ async def test_browser_add_key_without_selection_warns(
     async with app.run_test() as pilot:
         await pilot.pause()
         browser = _browser(app)
-        browser._selected_client = lambda: None  # ty: ignore[invalid-assignment]
+        browser.active_server = None
         browser.action_add_key()
         await pilot.pause()
     _mock(single_server[0]).put.assert_not_called()
@@ -301,7 +311,7 @@ async def test_browser_add_dir_without_selection_warns(
     async with app.run_test() as pilot:
         await pilot.pause()
         browser = _browser(app)
-        browser._selected_client = lambda: None  # ty: ignore[invalid-assignment]
+        browser.active_server = None
         browser.action_add_dir()
         await pilot.pause()
     _mock(single_server[0]).make_dir.assert_not_called()
@@ -311,9 +321,11 @@ async def test_browser_add_dir_without_selection_warns(
 
 
 @pytest.mark.asyncio
-async def test_browser_edit_save_persists_value(single_server: list[Server]) -> None:
-    """Editing then ``ctrl+s`` writes to etcd and leaves edit mode."""
-    app = TetcdApp(servers=single_server, show_splash=False)
+async def test_browser_edit_save_persists_value(
+    single_server_in_memory: list[Server],
+) -> None:
+    """Editing then ``ctrl+s`` writes to etcd and leaves edit mode showing the new value."""
+    app = TetcdApp(servers=single_server_in_memory, show_splash=False)
     async with app.run_test() as pilot:
         await pilot.pause()
         tree = app.screen.query_one(KeyTree)
@@ -327,11 +339,14 @@ async def test_browser_edit_save_persists_value(single_server: list[Server]) -> 
         app.screen.query_one("#kv-value-editor", TextArea).text = "updated"
         await pilot.press("ctrl+s")
         await pilot.pause()
-        panel = app.screen.query_one(KeyValuePanel)
-    _mock(single_server[0]).put.assert_called_with("/k", "updated")
-    assert panel.edit_mode is False
-    assert panel.selected_node is not None
-    assert panel.selected_node.value == "updated"
+        browser = _browser(app)
+        edit_mode = browser.edit_mode
+        active_node = browser.active_node
+    stored = single_server_in_memory[0].client.get("/k")
+    assert stored is not None and stored.value == "updated"
+    assert edit_mode is False
+    assert active_node is not None
+    assert active_node.value == "updated"
 
 
 @pytest.mark.asyncio
@@ -352,8 +367,8 @@ async def test_browser_edit_clean_cancel_exits_without_confirm(
         await pilot.pause()
         await pilot.press("escape")
         await pilot.pause()
-        panel = app.screen.query_one(KeyValuePanel)
-    assert panel.edit_mode is False
+        edit_mode = _browser(app).edit_mode
+    assert edit_mode is False
     _mock(single_server[0]).put.assert_not_called()
 
 
@@ -379,8 +394,8 @@ async def test_browser_edit_dirty_cancel_confirmed_discards(
         await pilot.pause()
         await pilot.press("y")
         await pilot.pause()
-        panel = _browser(app).query_one("#key-value", KeyValuePanel)
-    assert panel.edit_mode is False
+        edit_mode = _browser(app).edit_mode
+    assert edit_mode is False
     _mock(single_server[0]).put.assert_not_called()
 
 
@@ -406,10 +421,11 @@ async def test_browser_edit_dirty_cancel_rejected_keeps_editor(
         await pilot.pause()
         await pilot.press("n")
         await pilot.pause()
-        panel = _browser(app).query_one("#key-value", KeyValuePanel)
         editor = _browser(app).query_one("#kv-value-editor", TextArea)
-    assert panel.edit_mode is True
-    assert editor.text == "dirty-buffer"
+        edit_mode = _browser(app).edit_mode
+        editor_text = editor.text
+    assert edit_mode is True
+    assert editor_text == "dirty-buffer"
 
 
 @pytest.mark.asyncio
@@ -426,8 +442,8 @@ async def test_browser_edit_directory_warns(single_server: list[Server]) -> None
         await pilot.pause()
         await pilot.press("e")
         await pilot.pause()
-        panel = _browser(app).query_one("#key-value", KeyValuePanel)
-    assert panel.edit_mode is False
+        edit_mode = _browser(app).edit_mode
+    assert edit_mode is False
     _mock(single_server[0]).put.assert_not_called()
 
 
@@ -438,7 +454,7 @@ async def test_browser_edit_no_selection_warns(single_server: list[Server]) -> N
     async with app.run_test() as pilot:
         await pilot.pause()
         browser = _browser(app)
-        browser._selected_etcd_node = lambda: None  # ty: ignore[invalid-assignment]
+        browser.active_node = None
         browser.action_edit()
         await pilot.pause()
     _mock(single_server[0]).put.assert_not_called()
@@ -464,8 +480,8 @@ async def test_browser_edit_error_keeps_editor_open(
         app.screen.query_one("#kv-value-editor", TextArea).text = "boom"
         await pilot.press("ctrl+s")
         await pilot.pause()
-        panel = _browser(app).query_one("#key-value", KeyValuePanel)
-    assert panel.edit_mode is True
+        edit_mode = _browser(app).edit_mode
+    assert edit_mode is True
 
 
 # ── delete ──────────────────────────────────────────────────────────────────
@@ -539,7 +555,7 @@ async def test_browser_delete_without_selection_warns(
     async with app.run_test() as pilot:
         await pilot.pause()
         browser = _browser(app)
-        browser._selected_etcd_node = lambda: None  # ty: ignore[invalid-assignment]
+        browser.active_node = None
         browser.action_delete()
         await pilot.pause()
     _mock(single_server[0]).delete.assert_not_called()
@@ -797,12 +813,11 @@ async def test_browser_tree_selection_ignored_in_edit_mode(
         await pilot.pause()
         await pilot.press("e")
         await pilot.pause()
-        panel = app.screen.query_one(KeyValuePanel)
-        original = panel.selected_node
+        original = _browser(app).active_node
         tree.select_node(_child(server_node, "/app"))
         await pilot.pause()
-        assert panel.selected_node == original
-        assert panel.edit_mode is True
+        assert _browser(app).active_node == original
+        assert _browser(app).edit_mode is True
 
 
 @pytest.mark.asyncio
@@ -820,8 +835,7 @@ async def test_browser_add_key_cancel_modal_skips_editor(
         await pilot.pause()
         await pilot.press("escape")
         await pilot.pause()
-        panel = _browser(app).query_one("#key-value", KeyValuePanel)
-        assert panel.edit_mode is False
+        assert _browser(app).edit_mode is False
     _mock(single_server[0]).put.assert_not_called()
 
 
@@ -860,22 +874,22 @@ async def test_browser_paste_without_destination_warns(
         await pilot.press("c")
         await pilot.pause()
         browser = _browser(app)
-        browser._selected_client = lambda: None  # ty: ignore[invalid-assignment]
+        browser.active_server = None
         browser.action_paste()
         await pilot.pause()
     _mock(single_server[0]).put.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_browser_save_without_edit_client_notifies(
+async def test_browser_save_without_active_server_notifies(
     single_server: list[Server],
 ) -> None:
-    """A save with no bound client (rare; defensive) notifies and skips put."""
+    """A save with no active server (rare; defensive) notifies and skips put."""
     app = TetcdApp(servers=single_server, show_splash=False)
     async with app.run_test() as pilot:
         await pilot.pause()
         browser = _browser(app)
-        browser._edit_client = None
+        browser.active_server = None
         browser.on_key_value_panel_save_requested(
             KeyValuePanel.SaveRequested(key="/k", value="v", is_new=False)
         )
