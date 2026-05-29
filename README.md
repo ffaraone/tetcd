@@ -83,28 +83,6 @@ etcd_port    = 2379
 log_level    = "INFO"
 ```
 
-## Architecture
-
-```
-┌──────────────────────────────────────────┐
-│              CLI (Typer)                 │  tetcd.main
-└────────────────────┬─────────────────────┘
-                     │
-┌────────────────────▼─────────────────────┐
-│           Textual TUI Application        │  tetcd.tui
-│  BrowserScreen + modal screens           │
-└────────────────────┬─────────────────────┘
-                     │ EtcdClientProtocol
-┌────────────────────▼─────────────────────┐
-│           etcd Client Layer              │  tetcd.etcd
-│  EtcdV2Client (httpx)                    │
-│  EtcdV3Client (etcd3gw)                  │
-└──────────────────────────────────────────┘
-```
-
-Both clients satisfy the same `EtcdClientProtocol`, so the TUI doesn't care
-which API it's talking to. v3's flat key space simulates directories using
-prefix conventions and sentinel keys.
 
 ## Development
 
