@@ -10,6 +10,7 @@ from textual.binding import Binding
 from textual.containers import Grid
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label
+from textual.widgets.button import ButtonVariant
 
 
 class AddKeyScreen(ModalScreen[str | None]):
@@ -40,7 +41,7 @@ class AddKeyScreen(ModalScreen[str | None]):
         grid-gutter: 1 2;
         padding: 0 2 1 2;
         width: 60;
-        height: 13;
+        height: 14;
         border: thick $background 80%;
         background: $surface;
     }
@@ -132,7 +133,7 @@ class AddDirScreen(ModalScreen[str | None]):
         grid-gutter: 1 2;
         padding: 0 2 1 2;
         width: 60;
-        height: 13;
+        height: 14;
         border: thick $background 80%;
         background: $surface;
     }
@@ -250,18 +251,23 @@ class ConfirmScreen(ModalScreen[bool]):
     }
     """
 
-    def __init__(self, message: str) -> None:
+    def __init__(
+        self,
+        message: str,
+        variant: ButtonVariant = "primary",
+    ) -> None:
         """Show ``message`` as the confirmation prompt."""
         super().__init__()
         self._message = message
+        self._variant = variant
 
     def compose(self) -> ComposeResult:
         """Yield the dialog grid: title bar, centred message, Yes/No buttons."""
         yield Grid(
             Label("Confirm", id="dialog-title"),
             Label(self._message, id="message"),
-            Button("Yes [y]", variant="primary", id="btn-yes"),
-            Button("No [n]", id="btn-no"),
+            Button("Yes", variant=self._variant, id="btn-yes"),
+            Button("No", id="btn-no"),
             id="dialog",
         )
 

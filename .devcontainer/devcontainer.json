@@ -29,7 +29,8 @@
       ],
       "settings": {
         "python.terminal.activateEnvironment": false,
-        "python.defaultInterpreterPath": "/opt/venv/bin/python"
+        "python.defaultInterpreterPath": "/opt/venv/bin/python",
+        "python.defaultFormatter": "charliermarsh.ruff"
       }
     }
   }

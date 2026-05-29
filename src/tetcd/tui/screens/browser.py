@@ -156,9 +156,9 @@ class BrowserScreen(Screen[None]):
         client = server.client
 
         msg = (
-            f"Delete directory '{node.key}' and all its children?"
+            f"Delete directory '{server.config.label}:{node.key}' and all its children?"
             if node.is_dir
-            else f"Delete key '{node.key}'?"
+            else f"Delete key '{server.config.label}:{node.key}'?"
         )
 
         def handle(confirmed: bool | None) -> None:
@@ -172,7 +172,7 @@ class BrowserScreen(Screen[None]):
             except Exception as exc:
                 self.notify(f"Error: {exc}", severity="error")
 
-        self.app.push_screen(ConfirmScreen(msg), handle)
+        self.app.push_screen(ConfirmScreen(msg, variant="error"), handle)
 
     def action_edit(self) -> None:
         """Open the value pane in edit mode for the active leaf."""
